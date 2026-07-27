@@ -13,7 +13,7 @@ in their code — with a focus on AI-generated ("vibe coded") apps.
 - Hosting: Vercel
 - Payments: Stripe
 - OAuth: Google, GitHub
-- Domain: netherite.xyz (Namecheap)
+- Domain: netherite.uz (Namecheap)
 
 ## LLM usage
 - All LLM calls go through OpenRouter (single API, multiple models)

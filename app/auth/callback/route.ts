@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { insertNewConversation } from "@/lib/conversations";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -21,5 +22,35 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
   }
 
-  return NextResponse.redirect(`${origin}/chat`);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
+  }
+
+  // RLS-scoped: this can only ever return conversations where user_id = auth.uid().
+  const { data: recentConversations, error: fetchError } = await supabase
+    .from("conversations")
+    .select("id")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (fetchError) {
+    console.error("[auth/callback] Supabase select (conversations) failed:", fetchError);
+    return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
+  }
+
+  if (recentConversations && recentConversations.length > 0) {
+    return NextResponse.redirect(`${origin}/chat/${recentConversations[0].id}`);
+  }
+
+  const result = await insertNewConversation(supabase, user.id);
+  if ("error" in result) {
+    console.error("[auth/callback] Failed to create first conversation:", result.error);
+    return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
+  }
+
+  return NextResponse.redirect(`${origin}/chat/${result.id}`);
 }
