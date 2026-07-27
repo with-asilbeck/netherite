@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { CONVERSATION_ID_RE } from "@/lib/conversations";
+import { checkGuestChatRateLimit } from "@/lib/rate-limit";
 import {
   OpenRouterRequestError,
   readChatCompletionDeltas,
@@ -6,19 +8,24 @@ import {
   type ChatMessage,
 } from "@/lib/openrouter";
 
-// Conversation ids are nanoid() tokens: 21 chars, URL-safe alphabet.
-const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{21}$/;
-
 const MAX_MESSAGES = 50;
-const MAX_MESSAGE_LENGTH = 6000;
 const MAX_CONTEXT_MESSAGES = 30;
+
+// Guests get a strict, small cap — anonymous and IP-rate-limited only.
+// Authenticated users get a much larger one so an attached file's text
+// (see app/api/attachments/route.ts, capped at 20k chars there) plus a
+// normal question comfortably fits as one message. This never loosens the
+// guest-facing limit — it only raises the ceiling once there's a real,
+// verified account behind the request.
+const MAX_MESSAGE_LENGTH_GUEST = 6000;
+const MAX_MESSAGE_LENGTH_AUTHENTICATED = 30000;
 
 type ChatRequestBody = {
   conversationId?: unknown;
   messages?: unknown;
 };
 
-function validateMessages(raw: unknown): ChatMessage[] | null {
+function validateMessages(raw: unknown, maxMessageLength: number): ChatMessage[] | null {
   if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_MESSAGES) {
     return null;
   }
@@ -38,7 +45,7 @@ function validateMessages(raw: unknown): ChatMessage[] | null {
     if (
       typeof content !== "string" ||
       content.length === 0 ||
-      content.length > MAX_MESSAGE_LENGTH
+      content.length > maxMessageLength
     ) {
       return null;
     }
@@ -59,11 +66,23 @@ export async function POST(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // No login gate: guests can chat too (message content just isn't
+  // persisted — see below). Being public-facing, unauthenticated requests
+  // are rate limited per IP instead.
   if (!user) {
-    return Response.json(
-      { error: "Please log in to use the security advisor." },
-      { status: 401 },
-    );
+    const rateLimit = checkGuestChatRateLimit(request);
+    if (!rateLimit.allowed) {
+      return Response.json(
+        {
+          error:
+            "You've reached the guest message limit. Sign in for unlimited access, or try again later.",
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+        },
+      );
+    }
   }
 
   let body: ChatRequestBody;
@@ -73,18 +92,27 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  if (
-    typeof body.conversationId !== "string" ||
-    !CONVERSATION_ID_RE.test(body.conversationId)
-  ) {
-    return Response.json(
-      { error: "Invalid or missing conversationId." },
-      { status: 400 },
-    );
+  // conversationId only means anything for a persisted, authenticated
+  // conversation — guests never have one, so it's neither required nor
+  // trusted from the request body unless there's a real session.
+  let conversationId: string | null = null;
+  if (user) {
+    if (
+      typeof body.conversationId !== "string" ||
+      !CONVERSATION_ID_RE.test(body.conversationId)
+    ) {
+      return Response.json(
+        { error: "Invalid or missing conversationId." },
+        { status: 400 },
+      );
+    }
+    conversationId = body.conversationId;
   }
-  const conversationId = body.conversationId;
 
-  const messages = validateMessages(body.messages);
+  const messages = validateMessages(
+    body.messages,
+    user ? MAX_MESSAGE_LENGTH_AUTHENTICATED : MAX_MESSAGE_LENGTH_GUEST,
+  );
   if (!messages) {
     console.error("[chat] rejected messages payload:", JSON.stringify(body.messages));
     return Response.json({ error: "Invalid messages." }, { status: 400 });
@@ -92,24 +120,28 @@ export async function POST(request: Request) {
 
   const lastMessage = messages[messages.length - 1];
 
-  const userInsertPayload = {
-    user_id: user.id,
-    conversation_id: conversationId,
-    role: "user" as const,
-    content: lastMessage.content,
-  };
-  console.log("[chat] inserting user message:", JSON.stringify(userInsertPayload));
+  // Persistence requires both a verified session and a validated
+  // conversation — guests get neither, so this never runs for them.
+  if (user && conversationId) {
+    const userInsertPayload = {
+      user_id: user.id,
+      conversation_id: conversationId,
+      role: "user" as const,
+      content: lastMessage.content,
+    };
+    console.log("[chat] inserting user message:", JSON.stringify(userInsertPayload));
 
-  const { error: insertUserError } = await supabase
-    .from("chat_messages")
-    .insert(userInsertPayload);
+    const { error: insertUserError } = await supabase
+      .from("chat_messages")
+      .insert(userInsertPayload);
 
-  if (insertUserError) {
-    console.error("[chat] Supabase insert (user message) failed:", insertUserError);
-    return Response.json(
-      { error: "Couldn't save your message. Please try again." },
-      { status: 500 },
-    );
+    if (insertUserError) {
+      console.error("[chat] Supabase insert (user message) failed:", insertUserError);
+      return Response.json(
+        { error: "Couldn't save your message. Please try again." },
+        { status: 500 },
+      );
+    }
   }
 
   const contextMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
@@ -152,7 +184,7 @@ export async function POST(request: Request) {
         );
       }
 
-      if (fullText.trim().length > 0) {
+      if (user && conversationId && fullText.trim().length > 0) {
         const { error: insertAssistantError } = await supabase
           .from("chat_messages")
           .insert({

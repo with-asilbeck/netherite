@@ -25,7 +25,7 @@ function LoginErrorFromQuery() {
   return (
     <p
       role="alert"
-      className="mb-6 max-w-[360px] rounded-lg border border-[oklch(0.85_0_0.06_30)] bg-[oklch(0.95_0.03_30)] px-4 py-3 text-sm text-[oklch(0.35_0.1_30)]"
+      className="mb-6 max-w-[360px] rounded-lg border border-error-border bg-error-bg px-4 py-3 text-sm text-error-foreground"
     >
       {ERROR_MESSAGES.get(error) ??
         "Something went wrong signing you in. Please try again."}
@@ -62,7 +62,7 @@ function OAuthButtons() {
       {error && (
         <p
           role="alert"
-          className="max-w-[360px] rounded-lg border border-[oklch(0.85_0_0.06_30)] bg-[oklch(0.95_0.03_30)] px-4 py-3 text-sm text-[oklch(0.35_0.1_30)]"
+          className="max-w-[360px] rounded-lg border border-error-border bg-error-bg px-4 py-3 text-sm text-error-foreground"
         >
           {error}
         </p>
@@ -72,7 +72,7 @@ function OAuthButtons() {
         type="button"
         disabled={pendingProvider !== null}
         onClick={() => handleSignIn("google")}
-        className="flex h-12 w-[320px] items-center justify-center rounded-xl border border-[oklch(0.85_0_0)] bg-white text-sm font-medium text-[oklch(0.15_0_0)] transition-colors hover:bg-[oklch(0.96_0_0)] disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-12 w-[320px] items-center justify-center rounded-xl border border-border bg-card text-sm font-medium text-card-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
       >
         {pendingProvider === "google"
           ? "Redirecting…"
@@ -83,7 +83,7 @@ function OAuthButtons() {
         type="button"
         disabled={pendingProvider !== null}
         onClick={() => handleSignIn("github")}
-        className="flex h-12 w-[320px] items-center justify-center rounded-xl bg-[oklch(0.1_0_0)] text-sm font-medium text-[oklch(0.995_0_0)] transition-colors hover:bg-[oklch(0.25_0_0)] disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-12 w-[320px] items-center justify-center rounded-xl bg-accent text-sm font-medium text-accent-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {pendingProvider === "github"
           ? "Redirecting…"
@@ -96,7 +96,7 @@ function OAuthButtons() {
 export default function LoginPage() {
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col items-center bg-[#F8F3D9] font-sans text-[oklch(0.15_0_0)]`}
+      className={`${inter.variable} flex min-h-screen w-full flex-col items-center bg-sidebar font-sans text-foreground`}
     >
       <header className="flex w-full items-center px-6 py-7 sm:px-14">
         <Link href="/" className="flex items-center gap-3">
@@ -117,7 +117,7 @@ export default function LoginPage() {
         <h1 className="m-0 text-[clamp(28px,4vw,40px)] font-semibold tracking-[-0.02em]">
           Log in to Netherite
         </h1>
-        <p className="mt-4 max-w-[360px] text-base leading-[1.6] text-[oklch(0.4_0_0)]">
+        <p className="mt-4 max-w-[360px] text-base leading-[1.6] text-muted-foreground">
           Sign in to scan your repos and get vulnerability reports.
         </p>
 

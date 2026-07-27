@@ -18,13 +18,15 @@ export default async function ConversationPage({
     redirect("/login");
   }
 
-  // RLS scopes this to auth.uid() = user_id — a conversation that exists but
-  // belongs to someone else comes back as no row, same as one that doesn't
-  // exist at all. That's intentional: it never reveals which case it is.
+  // Explicit ownership filter alongside RLS — never rely on RLS alone. A
+  // conversation that exists but belongs to someone else comes back as no
+  // row, same as one that doesn't exist at all. That's intentional: it
+  // never reveals which case it is.
   const { data: conversation } = await supabase
     .from("conversations")
     .select("id")
     .eq("id", id)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (!conversation) {

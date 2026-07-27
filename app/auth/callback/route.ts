@@ -30,10 +30,11 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
   }
 
-  // RLS-scoped: this can only ever return conversations where user_id = auth.uid().
+  // Explicit ownership filter alongside RLS — never rely on RLS alone.
   const { data: recentConversations, error: fetchError } = await supabase
     .from("conversations")
     .select("id")
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(1);
 

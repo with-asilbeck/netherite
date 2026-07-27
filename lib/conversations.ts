@@ -3,6 +3,9 @@ import type { createClient } from "@/lib/supabase/server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
+// Conversation ids are nanoid() tokens: 21 chars, URL-safe alphabet.
+export const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{21}$/;
+
 export type CreateConversationResult = { id: string } | { error: string };
 
 export async function insertNewConversation(

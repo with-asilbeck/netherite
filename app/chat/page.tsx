@@ -16,7 +16,7 @@ export default async function ChatIndexPage() {
 
   if ("error" in result) {
     return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-[oklch(0.4_0_0)]">
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
         {result.error}
       </div>
     );

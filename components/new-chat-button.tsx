@@ -20,7 +20,7 @@ export function NewChatButton() {
         <button
           type="submit"
           disabled={isPending}
-          className="flex w-full items-center gap-2 rounded-lg border border-[oklch(0_0_0/0.08)] bg-white/60 px-3 py-2 text-sm font-medium transition-colors hover:bg-white disabled:opacity-60"
+          className="flex w-full items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-60"
         >
           <svg
             width="16"
@@ -38,7 +38,7 @@ export function NewChatButton() {
         </button>
       </form>
       {state?.error && (
-        <p className="mt-2 px-1 text-xs text-[oklch(0.45_0.1_30)]">
+        <p className="mt-2 px-1 text-xs text-error-foreground">
           {state.error}
         </p>
       )}

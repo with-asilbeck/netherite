@@ -14,10 +14,12 @@ function truncate(text: string, length: number) {
 
 async function loadRecentConversations(
   supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
 ) {
   const { data: conversations } = await supabase
     .from("conversations")
     .select("id, title")
+    .eq("user_id", userId) // defense in depth alongside RLS — never rely on RLS alone
     .order("created_at", { ascending: false })
     .limit(MAX_RECENTS);
 
@@ -66,7 +68,7 @@ export default async function ChatLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const conversations = user ? await loadRecentConversations(supabase) : [];
+  const conversations = user ? await loadRecentConversations(supabase, user.id) : [];
 
   return (
     <div className={`${inter.variable} h-screen w-full font-sans`}>

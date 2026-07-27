@@ -43,7 +43,7 @@ const navLinks: { label: string; href: string | null }[] = [
 ];
 
 const navLinkClassName =
-  "text-sm text-[oklch(0.35_0_0)] transition-colors hover:text-[oklch(0.1_0_0)]";
+  "text-sm text-muted-foreground transition-colors hover:text-foreground";
 
 const chatMessages = [
   {
@@ -66,8 +66,8 @@ const chatMessages = [
 
 function StatItem({ value, label }: { value: string; label: string }) {
   return (
-    <span className="whitespace-nowrap text-[15px] text-[oklch(0.35_0_0)]">
-      <b className="text-[oklch(0.1_0_0)]">{value}</b> {label}
+    <span className="whitespace-nowrap text-[15px] text-muted-foreground">
+      <b className="text-foreground">{value}</b> {label}
     </span>
   );
 }
@@ -75,9 +75,9 @@ function StatItem({ value, label }: { value: string; label: string }) {
 export default function Home() {
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col bg-[#F8F3D9] font-sans text-[oklch(0.15_0_0)]`}
+      className={`${inter.variable} flex min-h-screen w-full flex-col bg-sidebar font-sans text-foreground`}
     >
-      <header className="flex items-center justify-between border-b border-[oklch(0.9_0_0)] px-6 py-7 sm:px-14">
+      <header className="flex items-center justify-between border-b border-border px-6 py-7 sm:px-14">
         <div className="flex items-center gap-3">
           <Image
             src="/netherite-mark.png"
@@ -112,22 +112,22 @@ export default function Home() {
         <div className="flex items-center gap-6">
           <Link
             href="/login"
-            className="text-sm text-[oklch(0.15_0_0)] transition-opacity hover:opacity-60"
+            className="text-sm text-foreground transition-opacity hover:opacity-60"
           >
             Log in
           </Link>
-          <a
-            href="#"
-            className="rounded-[10px] bg-[oklch(0.1_0_0)] px-[18px] py-[9px] text-sm font-medium text-[oklch(0.995_0_0)] transition-colors hover:bg-[oklch(0.25_0_0)]"
+          <Link
+            href="/try"
+            className="rounded-[10px] bg-accent px-[18px] py-[9px] text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
           >
             Try Netherite
-          </a>
+          </Link>
         </div>
       </header>
 
       <main className="flex flex-1 flex-wrap items-center gap-16 px-6 py-20 sm:px-14">
         <div className="min-w-0 flex-1 basis-80 text-left">
-          <div className="mb-6 text-sm font-medium text-[oklch(0.45_0_0)]">
+          <div className="mb-6 text-sm font-medium text-muted-foreground">
             AI Penetration Tester
           </div>
 
@@ -135,37 +135,37 @@ export default function Home() {
             Find the exploit before it finds you.
           </h1>
 
-          <p className="mt-7 max-w-[520px] text-[19px] leading-[1.6] text-[oklch(0.4_0_0)]">
+          <p className="mt-7 max-w-[520px] text-[19px] leading-[1.6] text-muted-foreground">
             NETHERITE is an AI security specialist that scans your codebase,
             finds vulnerabilities, and shows you exactly how they&apos;d be
             exploited.
           </p>
 
           <div className="mt-11 flex flex-wrap items-center gap-6">
-            <a
-              href="#"
-              className="rounded-xl bg-[oklch(0.1_0_0)] px-7 py-[14px] text-base font-medium text-[oklch(0.995_0_0)] transition-colors hover:bg-[oklch(0.25_0_0)]"
+            <Link
+              href="/try"
+              className="rounded-xl bg-accent px-7 py-[14px] text-base font-medium text-accent-foreground transition-opacity hover:opacity-90"
             >
               Try Netherite
-            </a>
+            </Link>
           </div>
         </div>
 
         <div
-          className="flex min-w-0 flex-1 basis-80 items-center justify-center rounded-2xl border border-[oklch(0.85_0_0)]"
+          className="flex min-w-0 flex-1 basis-80 items-center justify-center rounded-2xl border border-border"
           style={{
             aspectRatio: "16/10",
             background:
-              "repeating-linear-gradient(135deg, oklch(0.93 0.005 90), oklch(0.93 0.005 90) 10px, oklch(0.9 0.005 90) 10px, oklch(0.9 0.005 90) 20px)",
+              "repeating-linear-gradient(135deg, var(--muted), var(--muted) 10px, var(--border) 10px, var(--border) 20px)",
           }}
         >
-          <span className="font-mono text-[13px] tracking-wide text-[oklch(0.5_0_0)]">
+          <span className="font-mono text-[13px] tracking-wide text-muted-foreground">
             product demo video
           </span>
         </div>
       </main>
 
-      <div className="overflow-hidden border-y border-[oklch(0.87_0_0)] py-7">
+      <div className="overflow-hidden border-y border-border py-7">
         <div className="marquee-track flex w-max gap-16">
           {[0, 1].map((copy) => (
             <div key={copy} className="flex shrink-0 gap-16">
@@ -179,11 +179,11 @@ export default function Home() {
 
       <section
         id="how-it-works"
-        className="flex min-h-screen items-center border-t border-[oklch(0.9_0_0)] px-6 py-14 sm:px-14"
+        className="flex min-h-screen items-center border-t border-border px-6 py-14 sm:px-14"
       >
         <div className="mx-auto w-full max-w-[1100px]">
           <div className="mb-[72px] text-center">
-            <div className="mb-4 text-sm font-medium text-[oklch(0.45_0_0)]">
+            <div className="mb-4 text-sm font-medium text-muted-foreground">
               How it works
             </div>
             <h2 className="m-0 text-[clamp(30px,4vw,44px)] font-semibold tracking-[-0.02em]">
@@ -194,13 +194,13 @@ export default function Home() {
           <div className="grid grid-cols-1 gap-12 sm:grid-cols-3">
             {steps.map((step) => (
               <div key={step.number}>
-                <div className="mb-4 text-sm font-medium text-[oklch(0.55_0_0)]">
+                <div className="mb-4 text-sm font-medium text-muted-foreground">
                   {step.number}
                 </div>
                 <h3 className="mb-3 text-xl font-semibold tracking-[-0.01em]">
                   {step.title}
                 </h3>
-                <p className="text-base leading-[1.6] text-[oklch(0.4_0_0)]">
+                <p className="text-base leading-[1.6] text-muted-foreground">
                   {step.body}
                 </p>
               </div>
@@ -209,16 +209,16 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="flex min-h-screen items-center border-t border-[oklch(0.9_0_0)] bg-[oklch(0.97_0.003_90)] px-6 py-14 sm:px-14">
+      <section className="flex min-h-screen items-center border-t border-border bg-muted px-6 py-14 sm:px-14">
         <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center gap-16">
           <div className="min-w-0 flex-1 basis-[380px] text-left">
-            <div className="mb-4 text-sm font-medium text-[oklch(0.45_0_0)]">
+            <div className="mb-4 text-sm font-medium text-muted-foreground">
               Ask Netherite
             </div>
             <h2 className="m-0 mb-5 text-[clamp(30px,4vw,44px)] font-semibold tracking-[-0.02em]">
               Talk to your security specialist directly.
             </h2>
-            <p className="m-0 max-w-[460px] text-[17px] leading-[1.6] text-[oklch(0.4_0_0)]">
+            <p className="m-0 max-w-[460px] text-[17px] leading-[1.6] text-muted-foreground">
               Ask about a specific endpoint, paste a snippet, or query an
               open finding — NETHERITE&apos;s chat explains the risk in
               plain language and suggests the fix.
@@ -226,14 +226,14 @@ export default function Home() {
           </div>
 
           <div
-            className="min-w-0 flex-1 basis-[380px] overflow-hidden rounded-2xl border border-[oklch(0.85_0_0)] bg-white"
-            style={{ boxShadow: "0 20px 40px oklch(0 0 0 / 0.06)" }}
+            className="min-w-0 flex-1 basis-[380px] overflow-hidden rounded-2xl border border-border bg-card"
+            style={{ boxShadow: "0 20px 40px rgb(0 0 0 / 0.06)" }}
           >
-            <div className="flex items-center gap-2 border-b border-[oklch(0.92_0_0)] px-[18px] py-[14px]">
-              <span className="h-2 w-2 rounded-full bg-[oklch(0.75_0_0)]" />
-              <span className="h-2 w-2 rounded-full bg-[oklch(0.75_0_0)]" />
-              <span className="h-2 w-2 rounded-full bg-[oklch(0.75_0_0)]" />
-              <span className="ml-2 font-mono text-[13px] text-[oklch(0.5_0_0)]">
+            <div className="flex items-center gap-2 border-b border-border px-[18px] py-[14px]">
+              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+              <span className="ml-2 font-mono text-[13px] text-muted-foreground">
                 netherite-chat
               </span>
             </div>
@@ -243,14 +243,14 @@ export default function Home() {
                 message.from === "user" ? (
                   <div
                     key={i}
-                    className="max-w-[80%] self-end rounded-tl-[14px] rounded-tr-[14px] rounded-br-[2px] rounded-bl-[14px] bg-[oklch(0.1_0_0)] px-4 py-3 text-sm leading-[1.5] text-[oklch(0.98_0_0)]"
+                    className="max-w-[80%] self-end rounded-tl-[14px] rounded-tr-[14px] rounded-br-[2px] rounded-bl-[14px] bg-accent px-4 py-3 text-sm leading-[1.5] text-accent-foreground"
                   >
                     {message.text}
                   </div>
                 ) : (
                   <div
                     key={i}
-                    className="max-w-[85%] self-start rounded-tl-[14px] rounded-tr-[14px] rounded-br-[14px] rounded-bl-[2px] bg-[oklch(0.95_0_0)] px-4 py-3 text-sm leading-[1.5] text-[oklch(0.2_0_0)]"
+                    className="max-w-[85%] self-start rounded-tl-[14px] rounded-tr-[14px] rounded-br-[14px] rounded-bl-[2px] bg-muted px-4 py-3 text-sm leading-[1.5] text-foreground"
                   >
                     {message.text}
                   </div>
@@ -259,16 +259,19 @@ export default function Home() {
             </div>
 
             <div className="flex gap-[10px] px-6 pb-6 pt-4">
-              <div className="flex-1 rounded-[10px] border border-[oklch(0.88_0_0)] px-[14px] py-[11px] text-sm text-[oklch(0.55_0_0)]">
+              <div className="flex-1 rounded-[10px] border border-border px-[14px] py-[11px] text-sm text-muted-foreground">
                 Ask about your codebase…
               </div>
-              <div className="h-10 w-10 shrink-0 rounded-[10px] bg-[oklch(0.1_0_0)]" />
+              <div className="h-10 w-10 shrink-0 rounded-[10px] bg-accent" />
             </div>
           </div>
         </div>
       </section>
 
-      <footer className="bg-[oklch(0.08_0_0)] px-6 pb-8 pt-[72px] text-[oklch(0.75_0_0)] sm:px-14">
+      {/* This footer is intentionally a fixed dark brand block, not theme-
+          reactive like the rest of the page — same idea as the existing
+          cream-body / dark-footer contrast, now drawn from the palette. */}
+      <footer className="bg-black-500 px-6 pb-8 pt-[72px] text-black-800 sm:px-14">
         <div className="mx-auto max-w-[1100px]">
           <div className="grid grid-cols-1 gap-10 sm:grid-cols-[1.4fr_1fr_1fr_1fr]">
             <div>
@@ -280,18 +283,18 @@ export default function Home() {
                   height={26}
                   className="h-[26px] w-[26px] object-contain invert"
                 />
-                <span className="text-base font-semibold tracking-tight text-[oklch(0.98_0_0)]">
+                <span className="text-base font-semibold tracking-tight text-almond_cream-900">
                   NETHERITE
                 </span>
               </div>
-              <p className="m-0 max-w-[260px] text-sm leading-[1.6] text-[oklch(0.55_0_0)]">
+              <p className="m-0 max-w-[260px] text-sm leading-[1.6] text-black-700">
                 AI security specialist that finds exploits before attackers
                 do.
               </p>
             </div>
 
             <div>
-              <div className="mb-4 text-[13px] font-semibold text-[oklch(0.95_0_0)]">
+              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
                 Products
               </div>
               <div className="flex flex-col gap-3">
@@ -300,7 +303,7 @@ export default function Home() {
                     <a
                       key={label}
                       href="#"
-                      className="text-sm text-[oklch(0.6_0_0)] transition-colors hover:text-[oklch(0.95_0_0)]"
+                      className="text-sm text-black-700 transition-colors hover:text-almond_cream-800"
                     >
                       {label}
                     </a>
@@ -310,7 +313,7 @@ export default function Home() {
             </div>
 
             <div>
-              <div className="mb-4 text-[13px] font-semibold text-[oklch(0.95_0_0)]">
+              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
                 Company
               </div>
               <div className="flex flex-col gap-3">
@@ -318,7 +321,7 @@ export default function Home() {
                   <a
                     key={label}
                     href="#"
-                    className="text-sm text-[oklch(0.6_0_0)] transition-colors hover:text-[oklch(0.95_0_0)]"
+                    className="text-sm text-black-700 transition-colors hover:text-almond_cream-800"
                   >
                     {label}
                   </a>
@@ -327,7 +330,7 @@ export default function Home() {
             </div>
 
             <div>
-              <div className="mb-4 text-[13px] font-semibold text-[oklch(0.95_0_0)]">
+              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
                 Legal
               </div>
               <div className="flex flex-col gap-3">
@@ -336,7 +339,7 @@ export default function Home() {
                     <a
                       key={label}
                       href="#"
-                      className="text-sm text-[oklch(0.6_0_0)] transition-colors hover:text-[oklch(0.95_0_0)]"
+                      className="text-sm text-black-700 transition-colors hover:text-almond_cream-800"
                     >
                       {label}
                     </a>
@@ -346,7 +349,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-14 border-t border-[oklch(0.2_0_0)] pt-6 text-[13px] text-[oklch(0.5_0_0)]">
+          <div className="mt-14 border-t border-black-600 pt-6 text-[13px] text-black-700">
             © 2026 NETHERITE
           </div>
         </div>
