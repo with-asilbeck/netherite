@@ -16,10 +16,10 @@ in their code — with a focus on AI-generated ("vibe coded") apps.
 - Domain: netherite.xyz (Namecheap)
 
 ## LLM usage
-
-- Gemini 2.0 Flash — surface-level / fast scans
-- Claude Sonnet — deep analysis, final vulnerability reports
-- API keys live in `.env.local` (Supabase, Claude, Gemini) — never commit this file
+- All LLM calls go through OpenRouter (single API, multiple models)
+- Model for deep analysis: anthropic/claude-sonnet-4.6
+- Model for fast/surface scans: google/gemini-2.0-flash-001
+- API key: OPENROUTER_API_KEY only — no direct Anthropic or Google API keys needed
 
 ## Core features (build in this order)
 
