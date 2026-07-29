@@ -1,5 +1,58 @@
 # Progress
 
+## 2026-07-30 — DataFast analytics
+
+Wired up DataFast (datafa.st) for pageview + custom-event analytics via the
+`datafast` npm SDK (already in `package.json`, v3.0.18).
+
+**What changed**
+
+- `lib/analytics.ts` (new): singleton `getAnalytics()` that lazily calls
+  `initDataFast()` once and caches the promise, plus a `trackEvent()` helper.
+  Returns `null` instead of throwing on SSR or init failure (ad blockers,
+  network errors) so analytics can never take a page down; a failed init
+  clears the cache so a later call can retry. `autoCapturePageviews: true`
+  handles both the initial pageview and SPA route changes — the SDK patches
+  `history.pushState`/`replaceState`/`popstate`, which is exactly how the App
+  Router navigates, so no `onRouterTransitionStart` hook is needed.
+- `instrumentation-client.ts` (new, repo root): fires `getAnalytics()` on load.
+  This Next 15.3+ file convention runs after the document loads but *before*
+  React hydration, so the landing pageview is recorded with its original
+  referrer and UTM/ad-click params intact — earlier than a `useEffect` in a
+  client component would manage, and with no change to `app/layout.tsx`.
+  Deliberately not awaited: Next warns if client instrumentation blocks for
+  more than ~16ms.
+- The website ID is hardcoded, not an env var. It's public by construction —
+  DataFast's non-npm install is a plain `<script data-website-id="...">` tag —
+  so this is not a `NEXT_PUBLIC_`-secret situation, and it keeps local dev and
+  Vercel working with zero extra env setup. Noted in the file that it should
+  move to `NEXT_PUBLIC_DATAFAST_WEBSITE_ID` if staging ever needs to report to
+  a separate DataFast site.
+
+**Verified (not just "looks done")**
+
+- `npx tsc --noEmit`: clean. `npm run build`: succeeds, all 15 routes build.
+- Grepped the production client chunks: both the website ID and the
+  `datafa.st/api/events` endpoint are present in an emitted chunk, and that
+  chunk is referenced from `.next/build-manifest.json` — so it genuinely
+  loads on every route rather than being compiled but orphaned.
+- **Not verified live:** no real event was observed landing in the DataFast
+  dashboard. The SDK silently disables itself on localhost by default
+  (`allowLocalhost: false`), which is the behavior we want — it keeps dev
+  traffic out of production analytics — but it means an end-to-end check
+  requires either a deploy to netherite.uz or a temporary
+  `allowLocalhost: true, debug: true`. Confirm on the dashboard after the
+  first deploy before treating this as done.
+
+**Next**
+
+- Confirm real pageviews appear in the DataFast dashboard post-deploy.
+- Not wired up yet, both one-liners on top of `lib/analytics.ts` when wanted:
+  `identify()` on sign-in (`app/auth/callback/route.ts` handles the OAuth
+  landing) + `reset()` on sign-out, and `trackPayment()` once Stripe exists.
+- Consider `cookieless: true` if we'd rather not run a consent banner —
+  relevant given this is a security/privacy product.
+
 ## 2026-07-28 — Guest chat mode
 
 Added a temporary, unauthenticated "guest chat" experience behind the
