@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Bind Tailwind's `dark:` variant to the `.dark` class that next-themes puts on
+   <html> (see ThemeProvider attribute="class"). Without this, v4 defaults `dark:`
+   to prefers-color-scheme, which ignores the in-app theme toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Brand palette. Note the shade direction is inverted from Tailwind's usual
    convention: higher numbers are LIGHTER, not darker (100 is darkest, 900 is
    lightest, matching how this palette was authored). */

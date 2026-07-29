@@ -184,7 +184,7 @@ export function ChatSidebar({
           alt="Netherite"
           width={24}
           height={24}
-          className="h-6 w-6 object-contain"
+          className="h-6 w-6 object-contain dark:invert"
         />
         <span className="text-sm font-semibold tracking-tight">
           NETHERITE

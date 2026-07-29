@@ -36,7 +36,7 @@ export default async function TryPage() {
             alt="Netherite"
             width={28}
             height={28}
-            className="h-7 w-7 object-contain"
+            className="h-7 w-7 object-contain dark:invert"
           />
           <span className="text-base font-semibold tracking-tight text-foreground">
             NETHERITE
