@@ -180,3 +180,62 @@ feature.
 - Revisit image upload once vision support for the configured model (or a
   swap to one that has it) is confirmed — the upload/storage side is
   already done.
+
+## 2026-07-29 — Chat navigation performance
+
+**What changed**
+
+Switching chats and starting a new one froze the UI for 1–2s. Measured the
+cause before touching anything: it was never the database. Each Supabase
+round trip from the dev machine costs ~300–400ms warm, and one chat switch
+was making up to five of them, serially, with no UI feedback at all.
+
+- **Deduped `auth.getUser()`.** It's a network call to the Supabase auth
+  server every time (it validates the JWT remotely — `getSession()` is the
+  local-decode one). `proxy.ts`, `app/chat/layout.tsx` and
+  `app/chat/[id]/page.tsx` each called it independently for the same answer.
+  Added `getCachedUser()` in `lib/supabase/server.ts`, wrapped in React
+  `cache()`, so layout + page share one call per render pass. 3 calls → 2.
+  The check itself is unchanged and still enforced server-side.
+- **Added `app/chat/[id]/loading.tsx`.** This was the single biggest
+  perceived win. Next.js skips prefetching dynamic routes entirely unless a
+  loading boundary exists, so a click did *nothing* until the full server
+  response landed. Now the layout + skeleton are prefetched and swap in
+  instantly.
+- **Parallelized the conversation and messages queries** in the page with
+  `Promise.all` — they never depended on each other, and the messages query
+  is independently gated by RLS.
+- **"New chat" costs zero network now.** It mints its own id
+  (`newConversationId()`) and navigates on the click. The row is created with
+  the first message via `ensureConversation()` (`INSERT … ON CONFLICT DO
+  NOTHING`). Also stops littering Recents with empty conversations.
+- **Memoized `MessageContent` and a new `MessageRow`.** Every render re-ran
+  the full remark + remark-gfm parse; during streaming, each token
+  re-rendered *every* message, so long chats re-parsed themselves on every
+  token. Now only the bubble receiving tokens re-parses.
+- **Keyed `ChatView` by conversation id** — it seeds its messages via
+  `useState`, which only reads its argument on mount, so a reused instance
+  could have kept rendering the previous conversation's history.
+
+**Verified**
+
+- `tsc --noEmit` clean, `eslint` clean (one pre-existing unrelated warning),
+  `next build` succeeds.
+- Measured per-call Supabase latency directly to establish the budget rather
+  than assuming: auth 397ms avg, REST 330–513ms avg.
+- The `conversation_id` index was checked and **already exists** —
+  `chat_messages_conversation_idx (conversation_id, created_at)`. It was
+  never the bottleneck; at these row counts the query is sub-millisecond and
+  the cost was purely network.
+
+**Next**
+
+- Needs a live smoke test with a real session: new chat → first message →
+  appears in Recents; switching between existing chats; deleting the last
+  conversation.
+- `app/chat/page.tsx` (the index redirect) still does a blocking insert on
+  every visit. Left alone deliberately — it had uncommitted work in progress
+  at the time. Same treatment would apply.
+- The three remaining per-navigation Supabase calls could become one by
+  having `proxy.ts` pass the verified user down, but that needs care not to
+  weaken the server-side auth gate.

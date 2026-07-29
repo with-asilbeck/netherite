@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { logout, createConversationAction } from "@/app/chat/actions";
+import { logout } from "@/app/chat/actions";
+import { newConversationId } from "@/lib/conversations";
 import { NewChatButton } from "@/components/new-chat-button";
 import { ConversationRow } from "@/components/conversation-row";
 
@@ -149,9 +150,20 @@ export function ChatSidebar({
   conversations: RecentConversation[];
 }) {
   const [conversations, setConversations] = useState(initialConversations);
+  const [syncedFrom, setSyncedFrom] = useState(initialConversations);
   const pathname = usePathname();
   const router = useRouter();
-  const [, startTransition] = useTransition();
+
+  // Re-sync when the server sends a new list. Conversations are now created
+  // lazily on their first message, so a brand-new chat only shows up in
+  // Recents after ChatView calls router.refresh() — without this, the local
+  // state seeded at mount would ignore that update and the new chat would
+  // stay invisible until a full reload. Server list wins; local edits below
+  // are optimistic until the next refresh confirms them.
+  if (initialConversations !== syncedFrom) {
+    setSyncedFrom(initialConversations);
+    setConversations(initialConversations);
+  }
 
   function handleDeleted(id: string) {
     const next = conversations.filter((c) => c.id !== id);
@@ -159,15 +171,13 @@ export function ChatSidebar({
 
     if (pathname !== `/chat/${id}`) return;
 
-    // The user was viewing the conversation they just deleted — send them
-    // to the next most recent one, or spin up a new one if none remain.
-    if (next.length > 0) {
-      router.push(`/chat/${next[0].id}`);
-    } else {
-      startTransition(async () => {
-        await createConversationAction({});
-      });
-    }
+    // The user was viewing the conversation they just deleted — send them to
+    // the next most recent one, or straight into a fresh (not yet persisted)
+    // one if none remain. Either way this is a plain client navigation now,
+    // with no insert to wait on.
+    router.push(
+      next.length > 0 ? `/chat/${next[0].id}` : `/chat/${newConversationId()}`,
+    );
   }
 
   function handleRenamed(id: string, title: string) {

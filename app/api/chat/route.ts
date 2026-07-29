@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { CONVERSATION_ID_RE } from "@/lib/conversations";
+import { CONVERSATION_ID_RE, ensureConversation } from "@/lib/conversations";
 import { checkGuestChatRateLimit } from "@/lib/rate-limit";
 import {
   OpenRouterRequestError,
@@ -123,6 +123,18 @@ export async function POST(request: Request) {
   // Persistence requires both a verified session and a validated
   // conversation — guests get neither, so this never runs for them.
   if (user && conversationId) {
+    // "New chat" now mints its id in the browser and navigates immediately,
+    // so the very first message of a conversation is the point at which its
+    // row has to exist. Idempotent: a no-op for every later message, and it
+    // cannot claim an id that already belongs to somebody else (ON CONFLICT
+    // DO NOTHING). The chat_messages insert below is what actually enforces
+    // ownership — its RLS policy joins to conversations.user_id, so a
+    // request aimed at another user's conversation fails there.
+    const ensured = await ensureConversation(supabase, user.id, conversationId);
+    if (ensured.error) {
+      return Response.json({ error: ensured.error }, { status: 500 });
+    }
+
     const userInsertPayload = {
       user_id: user.id,
       conversation_id: conversationId,

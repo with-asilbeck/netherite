@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -60,10 +61,22 @@ const markdownComponents: Components = {
 // (user bubbles, assistant bubbles) — never render message.content as
 // plain text elsewhere; route it through this component instead so
 // formatting can't drift out of sync between locations.
-export function MessageContent({ content }: { content: string }) {
+//
+// Memoized because rendering this is genuinely expensive: every render runs
+// the full remark + remark-gfm parse over the message's entire text. While a
+// response streams, each token triggers a setState on the whole message array,
+// so without this every message in the conversation re-parsed itself on every
+// token — quadratic work that made long chats crawl as they streamed. `content`
+// is a string, so the default shallow comparison is exactly the right test:
+// only the message actually receiving tokens re-parses.
+export const MessageContent = memo(function MessageContent({
+  content,
+}: {
+  content: string;
+}) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
       {content}
     </ReactMarkdown>
   );
-}
+});

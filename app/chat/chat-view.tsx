@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import { MessageContent } from "@/components/message-content";
 
 type Message = {
@@ -39,6 +41,54 @@ const ATTACHMENT_ACCEPT =
 
 const DEFAULT_ATTACHMENT_QUESTION = "Please review this file for security issues.";
 
+// One rendered message. Memoized alongside MessageContent so a streaming
+// response only re-renders the bubble actually receiving tokens.
+//
+// This works because the streaming update maps over the array and returns the
+// *same object reference* for every message it isn't touching, so the default
+// shallow prop comparison bails out for all of them. Keep it that way — an
+// update that rebuilt every element (e.g. `prev.map((m) => ({ ...m }))`) would
+// silently defeat this and bring the re-parse storm back.
+const MessageRow = memo(function MessageRow({ message }: { message: Message }) {
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[75%] rounded-2xl bg-accent px-4 py-2.5 text-[15px] leading-[1.6] text-accent-foreground">
+          <MessageContent content={message.content} />
+        </div>
+      </div>
+    );
+  }
+
+  if (message.role === "assistant") {
+    return (
+      <div className="flex justify-start">
+        <div className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-[15px] leading-[1.6] text-foreground">
+          <MessageContent content={message.content} />
+          {message.streaming && !message.content && (
+            <span className="flex items-center gap-1.5 py-1">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" />
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex justify-start">
+      <div
+        role="alert"
+        className="max-w-[85%] rounded-lg border border-error-border bg-error-bg px-4 py-2.5 text-[15px] leading-[1.6] text-error-foreground"
+      >
+        {message.content}
+      </div>
+    </div>
+  );
+});
+
 export function ChatView({
   userLabel,
   conversationId,
@@ -57,6 +107,7 @@ export function ChatView({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -189,6 +240,11 @@ export function ChatView({
     const pendingAttachment = attachment;
     if ((!trimmed && !pendingAttachment) || isResponding) return;
 
+    // The first message is the one that actually creates the conversation row
+    // server-side, so it's also the point at which the sidebar's Recents list
+    // becomes stale. Noted here, acted on once the response finishes.
+    const isFirstMessage = messages.length === 0;
+
     const typedText = trimmed || (pendingAttachment ? DEFAULT_ATTACHMENT_QUESTION : "");
     const content = pendingAttachment
       ? `[Attached file: ${pendingAttachment.filename}]\n\`\`\`\n${pendingAttachment.text}\n\`\`\`\n\n${typedText}`
@@ -286,6 +342,14 @@ export function ChatView({
         prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
       );
       setIsResponding(false);
+
+      // Pull the newly created conversation into the sidebar. Safe to do
+      // mid-conversation: ChatView is keyed by conversation id and seeds its
+      // messages via useState, so re-rendering the server tree refreshes
+      // Recents without disturbing what's on screen here.
+      if (isFirstMessage && conversationId) {
+        router.refresh();
+      }
     }
   }
 
@@ -469,40 +533,7 @@ export function ChatView({
           <div ref={scrollRef} className="flex-1 overflow-y-auto">
             <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-6 py-8">
               {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={
-                    message.role === "user" ? "flex justify-end" : "flex justify-start"
-                  }
-                >
-                  {message.role === "user" && (
-                    <div className="max-w-[75%] rounded-2xl bg-accent px-4 py-2.5 text-[15px] leading-[1.6] text-accent-foreground">
-                      <MessageContent content={message.content} />
-                    </div>
-                  )}
-
-                  {message.role === "assistant" && (
-                    <div className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-[15px] leading-[1.6] text-foreground">
-                      <MessageContent content={message.content} />
-                      {message.streaming && !message.content && (
-                        <span className="flex items-center gap-1.5 py-1">
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" />
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" />
-                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" />
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {message.role === "error" && (
-                    <div
-                      role="alert"
-                      className="max-w-[85%] rounded-lg border border-error-border bg-error-bg px-4 py-2.5 text-[15px] leading-[1.6] text-error-foreground"
-                    >
-                      {message.content}
-                    </div>
-                  )}
-                </div>
+                <MessageRow key={message.id} message={message} />
               ))}
             </div>
           </div>

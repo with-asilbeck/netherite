@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { inter } from "@/lib/fonts";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getCachedUser } from "@/lib/supabase/server";
 import { ChatSidebar } from "@/components/chat-sidebar";
 import { ChatShell } from "@/components/chat-shell";
 
@@ -63,10 +63,7 @@ export default async function ChatLayout({
 }: {
   children: ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const [supabase, user] = await Promise.all([createClient(), getCachedUser()]);
 
   const conversations = user ? await loadRecentConversations(supabase, user.id) : [];
 
