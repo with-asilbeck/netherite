@@ -16,7 +16,7 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
             alt="Netherite"
             width={34}
             height={34}
-            className="h-[34px] w-[34px] object-contain"
+            className="h-[34px] w-[34px] object-contain dark:invert"
           />
           <span className="text-lg font-semibold tracking-tight">
             NETHERITE

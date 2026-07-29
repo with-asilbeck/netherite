@@ -1,5 +1,83 @@
 # Progress
 
+## 2026-07-29 — Clickable chat preview + one shared chat-entry path
+
+Made the landing page's "Ask Netherite" preview card a real entry point, and
+collapsed the auth-check-and-redirect behind every chat entry point into one
+shared function.
+
+**What changed**
+
+- `lib/chat-entry.ts` (new): `resolveChatEntryPath(supabase, userId)` — the
+  single source of truth for where a signed-in user lands when entering chat
+  from outside it: **most recent conversation, or a freshly created one if
+  they have none**. Also exports `CHAT_ENTRY_PATH` (`/try`).
+- `components/chat-entry-link.tsx` (new): the only way the marketing site
+  links into chat. Header button, hero button, and the preview card all
+  render this, so the destination is defined once instead of per-button.
+- `app/page.tsx`: the whole `netherite-chat` preview card is now wrapped in
+  `ChatEntryLink` (an `<a>`, with an `aria-label` since the sample chat
+  inside would otherwise become its accessible name). Both existing "Try
+  Netherite" buttons were switched from hardcoded `<Link href="/try">` to
+  the same component.
+- `app/try/page.tsx`, `app/chat/page.tsx`, `app/auth/callback/route.ts`: all
+  three now call `resolveChatEntryPath` instead of each doing their own
+  thing. This removed a genuine duplicate — `auth/callback` already had the
+  most-recent-else-create query inline, and `/chat` had a *different*
+  behaviour (always created a brand-new conversation on every visit).
+  **Behaviour change:** visiting `/chat` directly now resumes your most
+  recent conversation rather than silently spawning a new one. Nothing
+  linked to `/chat` expecting "new chat" — the sidebar's New chat button
+  goes through `createConversationAction`, which is untouched.
+- `app/globals.css`: added a `--border-strong` semantic token (light
+  `khaki_beige-400`, dark `jet_black-600`) for hover/active borders on
+  interactive surfaces. Needed because Tailwind's alpha modifiers
+  (`border-accent/50`) silently compile to a *solid* color here — it can't
+  resolve alpha through the two-level `--color-accent: var(--accent)`
+  indirection these semantic tokens use. Verified in the compiled CSS, not
+  assumed; `color-mix()` in an arbitrary value collapsed the same way.
+
+**Note on shape:** the request suggested a client hook (`useChatEntryRedirect`).
+That was not built, deliberately — auth checks must stay server-side per the
+security rules in CLAUDE.md, and the "Try Netherite" button never had any
+client-side auth logic to extract (it was a plain `<Link href="/try">`; the
+branching has always lived in the `/try` route). The shared function is
+therefore server-side, and the two entry points share it by construction:
+they render the same component pointing at the same route.
+
+**Verified (not just "looks done")**
+
+- `npx tsc --noEmit` and `eslint` on all changed files: clean.
+- Created a real Supabase auth user with a real session cookie (minted via
+  `@supabase/ssr` itself, so the cookie format matches exactly what the app
+  reads) and drove real Chrome over CDP. Full matrix, **all three entry
+  points clicked for real** (preview card, header button, hero button):
+  - logged out: all three land on `/try`, guest banner present.
+  - logged in: all three land on the *same* `/chat/<most-recent-id>`.
+- Confirmed the "no conversations yet" branch creates exactly one
+  conversation, and that hitting the entry points twice more reuses it
+  rather than creating more (checked row counts via the service-role client,
+  bypassing RLS: `count=1` after 3 hits). Then inserted a newer conversation
+  and confirmed both entry points switch to it.
+- Hover/active states read out of `getComputedStyle` with CDP
+  `CSS.forcePseudoState`, in **both** themes:
+  - dark: border `#1b282f` -> `#40606f`, `translate: 0 -4px`, shadow
+    `0 20px 40px /.06` -> `0 28px 56px /.10`; `:active` drops the lift and
+    applies `scale(0.995)`.
+  - light: border `#d2bda5` -> `#b08b62`, same lift.
+  - `motion-reduce:` variants confirmed to be wrapped in a real
+    `@media (prefers-reduced-motion: reduce)` block in the compiled CSS.
+- Test user and its conversations deleted afterwards (cascade verified:
+  2 rows -> 0).
+
+**What's next**
+
+- The OAuth callback path was refactored but not exercised through a real
+  provider round-trip (still needs a live Google/GitHub sign-in to confirm
+  end-to-end). The query it now calls is the same one it ran inline before.
+- `.marquee-track` still animates unconditionally; it has no
+  `prefers-reduced-motion` guard. Pre-existing, untouched here.
+
 ## 2026-07-28 — Guest chat mode
 
 Added a temporary, unauthenticated "guest chat" experience behind the
@@ -180,3 +258,39 @@ feature.
 - Revisit image upload once vision support for the configured model (or a
   swap to one that has it) is confirmed — the upload/storage side is
   already done.
+
+## 2026-07-30 - 404 page
+
+Added a custom not-found page so unmatched URLs land on something that looks
+like the rest of the site instead of Next's default black-and-white 404.
+
+**What changed**
+
+- `app/not-found.tsx` (new): root 404, built from the same shell every other
+  standalone page uses (`inter.variable` + `bg-sidebar` + `font-sans`), the
+  same logo header as `/login`, and the same footer as the docs layout. Large
+  mono `404` as the visual (`text-border-strong`, `aria-hidden` since the
+  heading already says it), `Page not found` heading at the same clamp scale
+  as the login heading, and two CTAs reusing the existing button treatments -
+  accent-filled "Back home" and bordered "Read the docs".
+- No `metadata` export: Next only reads it from layout/page and
+  `global-not-found`, so the title falls through to the root layout's. Next
+  injects `noindex` on 404 responses itself.
+- Not using the experimental `globalNotFound` flag - it exists for apps with
+  multiple root layouts or a top-level dynamic segment, and this app has
+  neither, so plain `app/not-found.tsx` is the right convention here.
+
+**Verified**
+
+- `npx tsc --noEmit` and `eslint app/not-found.tsx`: clean.
+- Live against the running dev server: `GET /this-route-does-not-exist`
+  returns HTTP **404** (not a 200 soft-404) and the rendered HTML contains the
+  new page's heading and both CTAs.
+
+**Note**
+
+- `app/chat/[id]/page.tsx` calls `notFound()` for a conversation that doesn't
+  exist or isn't yours. That has no not-found boundary in its own segment, so
+  it now renders this root page full-screen rather than anything inside the
+  chat shell. Correct, but if that should instead render inside the chat
+  sidebar layout, it needs its own `app/chat/[id]/not-found.tsx`.

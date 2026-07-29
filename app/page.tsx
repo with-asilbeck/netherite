@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { inter } from "@/lib/fonts";
 import { ScrollLink } from "@/components/scroll-link";
+import { ChatEntryLink } from "@/components/chat-entry-link";
 
 const stats = [
   {
@@ -84,7 +85,7 @@ export default function Home() {
             alt="Netherite"
             width={34}
             height={34}
-            className="h-[34px] w-[34px] object-contain"
+            className="h-[34px] w-[34px] object-contain dark:invert"
           />
           <span className="text-lg font-semibold tracking-tight">
             NETHERITE
@@ -116,12 +117,9 @@ export default function Home() {
           >
             Log in
           </Link>
-          <Link
-            href="/try"
-            className="rounded-[10px] bg-accent px-[18px] py-[9px] text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
-          >
+          <ChatEntryLink className="rounded-[10px] bg-accent px-[18px] py-[9px] text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90">
             Try Netherite
-          </Link>
+          </ChatEntryLink>
         </div>
       </header>
 
@@ -142,12 +140,9 @@ export default function Home() {
           </p>
 
           <div className="mt-11 flex flex-wrap items-center gap-6">
-            <Link
-              href="/try"
-              className="rounded-xl bg-accent px-7 py-[14px] text-base font-medium text-accent-foreground transition-opacity hover:opacity-90"
-            >
+            <ChatEntryLink className="rounded-xl bg-accent px-7 py-[14px] text-base font-medium text-accent-foreground transition-opacity hover:opacity-90">
               Try Netherite
-            </Link>
+            </ChatEntryLink>
           </div>
         </div>
 
@@ -225,9 +220,11 @@ export default function Home() {
             </p>
           </div>
 
-          <div
-            className="min-w-0 flex-1 basis-[380px] overflow-hidden rounded-2xl border border-border bg-card"
-            style={{ boxShadow: "0 20px 40px rgb(0 0 0 / 0.06)" }}
+          {/* The whole preview is the affordance, not decoration: it routes
+              through the same entry point as the "Try Netherite" buttons. */}
+          <ChatEntryLink
+            aria-label="Open the Netherite chat advisor"
+            className="group block min-w-0 flex-1 basis-[380px] overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_40px_rgb(0_0_0/0.06)] transition duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-1 hover:border-border-strong hover:shadow-[0_28px_56px_rgb(0_0_0/0.10)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent active:translate-y-0 active:scale-[0.995] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100"
           >
             <div className="flex items-center gap-2 border-b border-border px-[18px] py-[14px]">
               <span className="h-2 w-2 rounded-full bg-muted-foreground" />
@@ -259,12 +256,12 @@ export default function Home() {
             </div>
 
             <div className="flex gap-[10px] px-6 pb-6 pt-4">
-              <div className="flex-1 rounded-[10px] border border-border px-[14px] py-[11px] text-sm text-muted-foreground">
+              <div className="flex-1 rounded-[10px] border border-border px-[14px] py-[11px] text-sm text-muted-foreground transition-colors duration-300 group-hover:border-border-strong">
                 Ask about your codebase…
               </div>
               <div className="h-10 w-10 shrink-0 rounded-[10px] bg-accent" />
             </div>
-          </div>
+          </ChatEntryLink>
         </div>
       </section>
 

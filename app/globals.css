@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Bind Tailwind's `dark:` variant to the `.dark` class that next-themes puts on
+   <html> (see ThemeProvider attribute="class"). Without this, v4 defaults `dark:`
+   to prefers-color-scheme, which ignores the in-app theme toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Brand palette. Note the shade direction is inverted from Tailwind's usual
    convention: higher numbers are LIGHTER, not darker (100 is darkest, 900 is
    lightest, matching how this palette was authored). */
@@ -70,6 +75,7 @@
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-card: var(--card);
@@ -90,6 +96,11 @@
   --muted: var(--color-khaki_beige-800);
   --muted-foreground: var(--color-stone_brown-500);
   --border: var(--color-khaki_beige-600);
+  /* Emphasized border, for hover/active states on interactive surfaces.
+     Alpha modifiers (border-accent/50) can't be used for this: Tailwind
+     can't resolve alpha through the two-level var indirection these
+     semantic tokens use, and silently drops it to a solid color. */
+  --border-strong: var(--color-khaki_beige-400);
   --accent: var(--color-stone_brown-500);
   --accent-foreground: var(--color-almond_cream-900);
   --card: var(--color-almond_cream-900);
@@ -115,6 +126,7 @@
   --muted: var(--color-jet_black-300);
   --muted-foreground: var(--color-khaki_beige-800);
   --border: var(--color-jet_black-400);
+  --border-strong: var(--color-jet_black-600);
   --accent: var(--color-khaki_beige-600);
   --accent-foreground: var(--color-black-200);
   --card: var(--color-jet_black-200);

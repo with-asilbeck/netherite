@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { insertNewConversation } from "@/lib/conversations";
+import { resolveChatEntryPath } from "@/lib/chat-entry";
 
 export default async function ChatIndexPage() {
   const supabase = await createClient();
@@ -12,7 +12,7 @@ export default async function ChatIndexPage() {
     redirect("/login");
   }
 
-  const result = await insertNewConversation(supabase, user.id);
+  const result = await resolveChatEntryPath(supabase, user.id);
 
   if ("error" in result) {
     return (
@@ -22,5 +22,5 @@ export default async function ChatIndexPage() {
     );
   }
 
-  redirect(`/chat/${result.id}`);
+  redirect(result.path);
 }

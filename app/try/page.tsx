@@ -4,6 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/server";
+import { resolveChatEntryPath } from "@/lib/chat-entry";
 import { ChatView } from "@/app/chat/chat-view";
 import { GuestBanner } from "@/components/guest-banner";
 
@@ -20,9 +21,12 @@ export default async function TryPage() {
   } = await supabase.auth.getUser();
 
   // Already signed in — guest mode doesn't apply, send them to their real,
-  // persisted chat instead.
+  // persisted chat instead: most recent conversation, or a new one.
   if (user) {
-    redirect("/chat");
+    const target = await resolveChatEntryPath(supabase, user.id);
+    // On failure fall through to /chat, which renders the error inside the
+    // chat shell rather than dropping a signed-in user into guest mode.
+    redirect("error" in target ? "/chat" : target.path);
   }
 
   return (
@@ -36,7 +40,7 @@ export default async function TryPage() {
             alt="Netherite"
             width={28}
             height={28}
-            className="h-7 w-7 object-contain"
+            className="h-7 w-7 object-contain dark:invert"
           />
           <span className="text-base font-semibold tracking-tight text-foreground">
             NETHERITE
