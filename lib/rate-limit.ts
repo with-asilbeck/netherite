@@ -105,3 +105,25 @@ const uploadLimiter = new FixedWindowLimiter(HOUR_MS, 20, MAX_TRACKED_KEYS, CLEA
 export function checkUploadRateLimit(userId: string): RateLimitResult {
   return uploadLimiter.check(userId);
 }
+
+// Repo attach/scan. Kept separate from the upload limiter (rather than
+// sharing its bucket) because the two will diverge: this endpoint currently
+// only validates a URL string, but it's the seam where real server-side
+// cloning lands, which is far more expensive per request. A tighter limit
+// now means the ceiling is already in place when that arrives, and raising
+// the file-upload allowance later can't loosen it.
+const repoScanLimiter = new FixedWindowLimiter(HOUR_MS, 10, MAX_TRACKED_KEYS, CLEANUP_INTERVAL_MS);
+
+export function checkRepoScanRateLimit(userId: string): RateLimitResult {
+  return repoScanLimiter.check(userId);
+}
+
+// Actually running a scan — clone, walk, and dozens of model calls — is far
+// more expensive than validating a URL or sending a chat message, so it gets
+// its own much tighter budget. This is the endpoint CLAUDE.md calls out as
+// public-facing and abusable.
+const repoScanRunLimiter = new FixedWindowLimiter(HOUR_MS, 3, MAX_TRACKED_KEYS, CLEANUP_INTERVAL_MS);
+
+export function checkRepoScanRunRateLimit(userId: string): RateLimitResult {
+  return repoScanRunLimiter.check(userId);
+}

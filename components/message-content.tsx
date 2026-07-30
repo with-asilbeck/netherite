@@ -33,7 +33,11 @@ const markdownComponents: Components = {
     </blockquote>
   ),
   code: ({ children }) => (
-    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em] text-foreground">
+    // Absolute 13px, not `0.9em`: relative sizing compounded against the
+    // `pre` below (13px x 0.9) and rendered code inside fenced blocks at
+    // 11.7px, which is too small to read on a phone. Fixed size means inline
+    // code and block code match at 13px wherever they appear.
+    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px] text-foreground">
       {children}
     </code>
   ),

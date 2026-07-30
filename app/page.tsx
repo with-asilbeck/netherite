@@ -123,7 +123,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="flex flex-1 flex-wrap items-center gap-16 px-6 py-20 sm:px-14">
+      <main className="flex flex-1 flex-wrap items-center gap-10 px-6 py-14 sm:gap-16 sm:px-14 sm:py-20">
         <div className="min-w-0 flex-1 basis-80 text-left">
           <div className="mb-6 text-sm font-medium text-muted-foreground">
             AI Penetration Tester
@@ -133,13 +133,13 @@ export default function Home() {
             Find the exploit before it finds you.
           </h1>
 
-          <p className="mt-7 max-w-[520px] text-[19px] leading-[1.6] text-muted-foreground">
+          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.6] text-muted-foreground sm:mt-7 sm:text-[19px]">
             NETHERITE is an AI security specialist that scans your codebase,
             finds vulnerabilities, and shows you exactly how they&apos;d be
             exploited.
           </p>
 
-          <div className="mt-11 flex flex-wrap items-center gap-6">
+          <div className="mt-9 flex flex-wrap items-center gap-4 sm:mt-11 sm:gap-6">
             <ChatEntryLink className="rounded-xl bg-accent px-7 py-[14px] text-base font-medium text-accent-foreground transition-opacity hover:opacity-90">
               Try Netherite
             </ChatEntryLink>
@@ -205,7 +205,7 @@ export default function Home() {
       </section>
 
       <section className="flex min-h-screen items-center border-t border-border bg-muted px-6 py-14 sm:px-14">
-        <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center gap-16">
+        <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center gap-10 sm:gap-16">
           <div className="min-w-0 flex-1 basis-[380px] text-left">
             <div className="mb-4 text-sm font-medium text-muted-foreground">
               Ask Netherite

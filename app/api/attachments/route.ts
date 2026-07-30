@@ -6,6 +6,15 @@ const BUCKET = "chat-attachments";
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2MB — code/text files
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB — screenshots tend to be bigger
 
+// Image upload's backend is built but deliberately not exposed: vision
+// support for the configured model is unconfirmed, so nothing in the UI
+// offers it (see PROGRESS.md, 2026-07-28). Left off, the `kind=image` branch
+// was still reachable by anyone who posted the field by hand — which meant
+// the code/text extension allow-list and its 2MB cap could be sidestepped
+// for a 4MB binary. Flip this to true only together with wiring image
+// attachments into the composer.
+const IMAGE_UPLOADS_ENABLED: boolean = false;
+
 // Rejects oversized requests by their declared Content-Length before doing
 // any body parsing — request.formData()/request.json() would otherwise
 // buffer the whole body into memory first, so a client could send a huge
@@ -14,7 +23,8 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB — screenshots tend to be bigge
 // (e.g. with chunked transfer-encoding), so this is a fast-path guard, not
 // the only one — the post-parse byte-length checks below remain the real
 // backstop.
-const MAX_REQUEST_BYTES = Math.max(MAX_FILE_BYTES, MAX_IMAGE_BYTES) + 64 * 1024;
+const MAX_REQUEST_BYTES =
+  (IMAGE_UPLOADS_ENABLED ? Math.max(MAX_FILE_BYTES, MAX_IMAGE_BYTES) : MAX_FILE_BYTES) + 64 * 1024;
 
 function rejectIfTooLarge(request: Request): Response | null {
   const contentLength = Number(request.headers.get("content-length"));
@@ -265,6 +275,9 @@ export async function POST(request: Request) {
   const kind = formData.get("kind") === "image" ? "image" : "file";
 
   if (kind === "image") {
+    if (!IMAGE_UPLOADS_ENABLED) {
+      return Response.json({ error: "Image uploads aren't available yet." }, { status: 400 });
+    }
     return handleImageUpload(supabase, user.id, file);
   }
   return handleFileUpload(supabase, user.id, file);

@@ -58,7 +58,9 @@ export function ChatShell({
             className="absolute inset-0 bg-black-500/30"
             onClick={() => setMobileOpen(false)}
           />
-          <div className="relative z-50 h-full w-[280px] shadow-xl">
+          {/* max-w keeps a visible backdrop to tap on the narrowest phones,
+              where a flat 280px drawer covers 87% of a 320px screen. */}
+          <div className="relative z-50 h-full w-[280px] max-w-[85vw] shadow-xl">
             {sidebar}
           </div>
         </div>
@@ -82,7 +84,10 @@ export function ChatShell({
             type="button"
             aria-label="Open menu"
             onClick={() => setMobileOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+            // 44px: this is a touch-only control (the wrapper is md:hidden),
+            // so it gets a full-size tap target rather than the 32px the
+            // desktop toggle uses with a cursor.
+            className="-ml-2 flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
           >
             <svg
               width="18"

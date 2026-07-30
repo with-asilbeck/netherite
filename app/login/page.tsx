@@ -58,7 +58,10 @@ function OAuthButtons() {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    // w-full + a max cap rather than a fixed width: at 320px a hard
+    // `w-[320px]` plus the page's px-6 made the document 368px wide, so the
+    // whole login page scrolled sideways on the smallest phones.
+    <div className="flex w-full max-w-[320px] flex-col gap-3">
       {error && (
         <p
           role="alert"
@@ -72,7 +75,7 @@ function OAuthButtons() {
         type="button"
         disabled={pendingProvider !== null}
         onClick={() => handleSignIn("google")}
-        className="flex h-12 w-[320px] items-center justify-center rounded-xl border border-border bg-card text-sm font-medium text-card-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-12 w-full items-center justify-center rounded-xl border border-border bg-card text-sm font-medium text-card-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
       >
         {pendingProvider === "google"
           ? "Redirecting…"
@@ -83,7 +86,7 @@ function OAuthButtons() {
         type="button"
         disabled={pendingProvider !== null}
         onClick={() => handleSignIn("github")}
-        className="flex h-12 w-[320px] items-center justify-center rounded-xl bg-accent text-sm font-medium text-accent-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-12 w-full items-center justify-center rounded-xl bg-accent text-sm font-medium text-accent-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {pendingProvider === "github"
           ? "Redirecting…"
@@ -113,7 +116,10 @@ export default function LoginPage() {
         </Link>
       </header>
 
-      <main className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+      {/* w-full matters here: the parent centres with `items-center`, so
+          without it `main` is sized to its content and any fixed-width child
+          pushes the whole document wider than the viewport. */}
+      <main className="flex w-full flex-1 flex-col items-center justify-center px-6 text-center">
         <h1 className="m-0 text-[clamp(28px,4vw,40px)] font-semibold tracking-[-0.02em]">
           Log in to Netherite
         </h1>
@@ -121,7 +127,7 @@ export default function LoginPage() {
           Sign in to scan your repos and get vulnerability reports.
         </p>
 
-        <div className="mt-10">
+        <div className="mt-10 w-full max-w-[320px]">
           <Suspense fallback={null}>
             <LoginErrorFromQuery />
           </Suspense>

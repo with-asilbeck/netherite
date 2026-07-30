@@ -15,15 +15,21 @@ export function DocsSidebar() {
   const pathname = usePathname();
 
   return (
-    <nav className="w-1/5 shrink-0 border-r border-border px-6 py-16 sm:px-8">
-      <div className="flex flex-col gap-1">
+    // Below md this is a full-width strip under the header that scrolls
+    // sideways if the links don't fit; from md up it's the original vertical
+    // column. As a `w-1/5` column it was 64px wide on a 320px phone — 16px of
+    // content once padding was taken off — which wrapped every link to one
+    // character per line. `min-w` keeps it usable on tablets, where a fifth of
+    // 768px is still too narrow for "Getting started".
+    <nav className="shrink-0 border-b border-border px-4 py-3 md:w-1/5 md:min-w-[196px] md:border-b-0 md:border-r md:px-8 md:py-16">
+      <div className="flex gap-1 overflow-x-auto md:flex-col md:overflow-x-visible">
         {links.map(({ label, href }) => {
           const active = pathname === href;
           return (
             <Link
               key={href}
               href={href}
-              className={`rounded-lg px-3 py-2 text-sm transition-colors ${
+              className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors md:shrink md:whitespace-normal ${
                 active
                   ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"

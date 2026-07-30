@@ -31,9 +31,11 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
         </Link>
       </header>
 
-      <div className="flex flex-1">
+      {/* Stacked on phones so the nav is a strip above the content, side by
+          side from md up. */}
+      <div className="flex flex-1 flex-col md:flex-row">
         <DocsSidebar />
-        <main className="min-w-0 flex-1 px-6 py-16 sm:px-14">{children}</main>
+        <main className="min-w-0 flex-1 px-6 py-10 sm:px-14 md:py-16">{children}</main>
       </div>
 
       <footer className="border-t border-border px-6 py-8 text-xs text-muted-foreground sm:px-14">
