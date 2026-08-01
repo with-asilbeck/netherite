@@ -1,3 +1,5 @@
+import { addUsage, EMPTY_USAGE, type CompletionUsage } from "@/lib/openrouter";
+
 // Hard limits for the repo-scan pipeline. Every one of these exists so a
 // scan terminates with a clear message instead of hanging or running the
 // bill up — a public-facing endpoint that clones arbitrary repos has to
@@ -43,11 +45,35 @@ export const SCAN_TIMEOUT_MS = 240_000;
  * once, instead of burning a dozen requests to collect a dozen copies of the
  * same error. Created per scan, never module-level: it must not leak between
  * requests.
+ *
+ * `usage` accumulates what every stage actually cost. A scan is dozens of
+ * model calls across two models, so the single usage_events row the route
+ * writes needs the total, not any one call's figure.
+ *
+ * `modelCalls` counts completions that actually came back, and is tracked
+ * separately from `usage` on purpose. The route uses it to decide whether a
+ * scan did any billable work at all, and that decision must not depend on
+ * whether upstream reported cost numbers: a provider that returns no
+ * `usage` object would otherwise make every scan look free and refund
+ * itself.
  */
-export type ScanBudget = { creditsExhausted: boolean };
+export type ScanBudget = {
+  creditsExhausted: boolean;
+  usage: CompletionUsage;
+  modelCalls: number;
+};
 
 export function newScanBudget(): ScanBudget {
-  return { creditsExhausted: false };
+  return { creditsExhausted: false, usage: EMPTY_USAGE, modelCalls: 0 };
+}
+
+/**
+ * Folds one completed call into the running per-scan totals. Called only
+ * after a model actually responded — a request that threw was never billed.
+ */
+export function addScanUsage(budget: ScanBudget, usage: CompletionUsage) {
+  budget.usage = addUsage(budget.usage, usage);
+  budget.modelCalls += 1;
 }
 
 export const OUT_OF_CREDITS_NOTE =

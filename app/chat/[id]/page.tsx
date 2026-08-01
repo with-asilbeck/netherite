@@ -50,6 +50,7 @@ export default async function ConversationPage({
   return (
     <ChatView
       userLabel={userLabel}
+      userId={user.id}
       conversationId={id}
       initialMessages={initialMessages}
     />

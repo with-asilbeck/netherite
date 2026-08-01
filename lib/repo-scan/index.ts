@@ -1,4 +1,5 @@
 import type { GitHubRepoRef } from "@/lib/github-repo";
+import type { Entitlement } from "@/lib/tier-features";
 import { CloneError, shallowClone } from "./clone";
 import { collectFiles, type CollectedFile } from "./collect";
 import {
@@ -8,6 +9,7 @@ import {
   newScanBudget,
   SCAN_TIMEOUT_MS,
   TRIAGE_CONCURRENCY,
+  type ScanBudget,
 } from "./config";
 import { deepScanFile, type DeepFinding } from "./deep-scan";
 import { mapWithConcurrency } from "./pool";
@@ -16,6 +18,14 @@ import { intoBatches, triageBatch, type TriageVerdict } from "./triage";
 
 export { CloneError } from "./clone";
 export { RepoHostError } from "./ssrf";
+export { newScanBudget, type ScanBudget } from "./config";
+export {
+  acquireScanSlot,
+  ScanQueueFullError,
+  ScanQueueTimeoutError,
+  PRIORITY_HIGH,
+  PRIORITY_NORMAL,
+} from "./queue";
 
 export type ScanProgress =
   | { type: "status"; message: string }
@@ -55,7 +65,19 @@ export type ScanReport = {
  */
 export async function* scanRepository(
   repo: GitHubRepoRef,
+  // What this caller's plan buys: which models the two stages use, whether
+  // the deep pass is asked for exploit chains, and which report renderer
+  // runs at the end. Resolved by the route from the subscriptions table
+  // (lib/tier-features.ts) and required — there is no default, so a caller
+  // cannot omit it and silently get the paid behaviour.
+  entitlement: Entitlement,
   outerSignal?: AbortSignal,
+  // The caller may supply the budget so it can read the accumulated token
+  // and cost totals once the scan drains — a scan is dozens of model calls
+  // and the route records their sum as one usage_events row. Passed in
+  // rather than yielded as a progress event so per-request spend never
+  // reaches the browser.
+  budget: ScanBudget = newScanBudget(),
 ): AsyncGenerator<ScanProgress> {
   const startedAt = Date.now();
 
@@ -68,7 +90,6 @@ export async function* scanRepository(
   const signal = controller.signal;
 
   let clone: Awaited<ReturnType<typeof shallowClone>> | null = null;
-  const budget = newScanBudget();
 
   try {
     yield { type: "status", message: `Cloning ${repo.slug}…` };
@@ -116,7 +137,7 @@ export async function* scanRepository(
 
     const batches = intoBatches(triaged);
     const batchResults = await mapWithConcurrency(batches, TRIAGE_CONCURRENCY, (batch) =>
-      triageBatch(batch, budget, signal),
+      triageBatch(batch, entitlement, budget, signal),
     );
 
     const allVerdicts: TriageVerdict[] = batchResults.flat();
@@ -154,7 +175,7 @@ export async function* scanRepository(
     await mapWithConcurrency(
       toDeepScan,
       DEEP_CONCURRENCY,
-      (file) => deepScanFile(file, budget, signal),
+      (file) => deepScanFile(file, entitlement, budget, signal),
       (result) => {
         deepDone++;
         deepResults.push(result);
@@ -181,6 +202,7 @@ export async function* scanRepository(
       verdicts: allVerdicts,
       deepResults,
       deepSkipped,
+      entitlement,
     });
 
     yield { type: "report", report };
@@ -227,6 +249,7 @@ function buildReport({
   verdicts,
   deepResults,
   deepSkipped,
+  entitlement,
 }: {
   repo: GitHubRepoRef;
   startedAt: number;
@@ -236,6 +259,7 @@ function buildReport({
   verdicts: TriageVerdict[];
   deepResults: DeepFinding[];
   deepSkipped: number;
+  entitlement: Entitlement;
 }): ScanReport {
   const findings = deepResults
     .filter((r) => r.report)
@@ -268,7 +292,13 @@ function buildReport({
     markdown: "",
   };
 
-  report.markdown = renderMarkdown(report, triagedCount);
+  // Which renderer runs is decided here, from the tier, and the chosen
+  // markdown is what gets streamed *and* what gets persisted as the
+  // assistant message — so there is no second copy of the report in a
+  // richer format sitting anywhere a lower tier could ask for it.
+  report.markdown = entitlement.structuredReport
+    ? renderStructuredMarkdown(report, triagedCount, entitlement)
+    : renderMarkdown(report, triagedCount);
   return report;
 }
 
@@ -350,6 +380,120 @@ function renderMarkdown(report: ScanReport, triagedCount: number): string {
     lines.push(
       `- Flagged but not deep-reviewed (deep-review budget of ${MAX_DEEP_FILES}): ${report.limits.deepSkipped} file(s).`,
     );
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * The Pro/Max report: the same findings, wrapped in something that can be
+ * exported and handed to somebody who wasn't in the room.
+ *
+ * The difference from `renderMarkdown` is framing, not content — a metadata
+ * header that says what was and wasn't covered, findings grouped under a
+ * per-file heading with a stable anchor, and an explicit scope statement so
+ * the document can't be mistaken for a clean bill of health when read on its
+ * own. The findings themselves are already structured by the deep pass; see
+ * STRUCTURED_REPORT_INSTRUCTIONS.
+ */
+function renderStructuredMarkdown(
+  report: ScanReport,
+  triagedCount: number,
+  entitlement: Entitlement,
+): string {
+  const lines: string[] = [];
+  const deepReviewed =
+    report.cleanFiles.length + report.findings.length + report.failures.length;
+  const excludedTotal = Object.values(report.limits.excluded).reduce((a, b) => a + b, 0);
+
+  lines.push(`# Security assessment — ${report.repo}`);
+  lines.push("");
+  lines.push("| | |");
+  lines.push("|---|---|");
+  lines.push(`| **Repository** | [${report.repo}](${report.url}) |`);
+  lines.push(`| **Ref** | ${report.ref ?? "default branch"} |`);
+  lines.push(`| **Generated** | ${new Date().toISOString()} |`);
+  lines.push(`| **Files reviewed** | ${triagedCount} triaged, ${deepReviewed} deep-reviewed |`);
+  lines.push(`| **Files with findings** | ${report.findings.length} |`);
+  lines.push(`| **Analysis depth** | ${entitlement.exploitAnalysis ? "Exploit-chain" : "Standard"} |`);
+  lines.push(`| **Duration** | ${(report.durationMs / 1000).toFixed(1)}s |`);
+  lines.push("");
+
+  lines.push("## Findings");
+  lines.push("");
+  if (report.findings.length === 0) {
+    lines.push(
+      "No issues met the reporting bar. See **Scope and limitations** below before treating this as a clean result — it describes what was not examined.",
+    );
+    lines.push("");
+  } else {
+    for (const finding of report.findings) {
+      lines.push(`### \`${finding.relPath}\``);
+      lines.push("");
+      lines.push(finding.report.trim());
+      lines.push("");
+    }
+  }
+
+  lines.push("## Scope and limitations");
+  lines.push("");
+  lines.push(
+    "This is a static review of source files only. It does not cover runtime configuration, deployment, infrastructure, dependencies, or any code excluded below.",
+  );
+  lines.push("");
+  lines.push(`- Files triaged: **${triagedCount}**`);
+  lines.push(`- Files deep-reviewed: **${deepReviewed}**`);
+  lines.push(`- Files flagged in triage: **${report.filesFlagged.length}**`);
+  lines.push(
+    `- Excluded before scanning: **${excludedTotal}**${
+      excludedTotal > 0
+        ? ` (${Object.entries(report.limits.excluded)
+            .filter(([, n]) => n > 0)
+            .map(([reason, n]) => `${reason}: ${n}`)
+            .join(", ")})`
+        : ""
+    }`,
+  );
+  if (report.limits.droppedByCap > 0) {
+    lines.push(
+      `- Dropped at the size/count cap: **${report.limits.droppedByCap}** lower-risk file(s); path-priority files were exempt.`,
+    );
+  }
+  if (report.limits.triageSkipped > 0) {
+    lines.push(`- Not triaged (file-count cap): **${report.limits.triageSkipped}** lower-risk file(s).`);
+  }
+  if (report.limits.deepSkipped > 0) {
+    lines.push(
+      `- Flagged but not deep-reviewed (budget of ${MAX_DEEP_FILES}): **${report.limits.deepSkipped}** file(s).`,
+    );
+  }
+  lines.push("");
+
+  if (report.filesFlagged.length > 0) {
+    lines.push("<details>");
+    lines.push("<summary>Files flagged in triage</summary>");
+    lines.push("");
+    for (const file of report.filesFlagged) {
+      const wasReviewed =
+        report.findings.some((f) => f.relPath === file.relPath) ||
+        report.cleanFiles.includes(file.relPath) ||
+        report.failures.some((f) => f.relPath === file.relPath);
+      lines.push(
+        `- \`${file.relPath}\` — ${file.reason}${wasReviewed ? "" : " — _not deep-reviewed (budget reached)_"}`,
+      );
+    }
+    lines.push("");
+    lines.push("</details>");
+    lines.push("");
+  }
+
+  if (report.failures.length > 0) {
+    lines.push("### Files that failed deep review");
+    lines.push("");
+    for (const failure of report.failures) {
+      lines.push(`- \`${failure.relPath}\` — ${failure.error}`);
+    }
+    lines.push("");
   }
 
   return lines.join("\n");

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { CONVERSATION_ID_RE, insertNewConversation } from "@/lib/conversations";
+import { CONVERSATION_ID_RE } from "@/lib/conversations";
 
 const MAX_TITLE_LENGTH = 200;
 const GENERIC_ERROR = "Something went wrong. Please try again.";
@@ -13,27 +13,10 @@ export async function logout() {
   redirect("/login");
 }
 
-export type CreateConversationState = { error?: string };
-
-export async function createConversationAction(
-  _prevState: CreateConversationState,
-): Promise<CreateConversationState> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const result = await insertNewConversation(supabase, user.id);
-  if ("error" in result) {
-    return { error: result.error };
-  }
-
-  redirect(`/chat/${result.id}`);
-}
+// There is deliberately no "create conversation" action here any more. A
+// conversation is created only by sending its first message, inside the API
+// route that handles that message (lib/conversations.ts). An action that
+// creates an empty one is exactly what filled the table with unused rows.
 
 export type DeleteConversationResult = { error?: string };
 

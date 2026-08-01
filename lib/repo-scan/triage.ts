@@ -1,6 +1,8 @@
-import { OpenRouterRequestError, requestChatCompletion, SCAN_TRIAGE_MODEL } from "@/lib/openrouter";
+import { OpenRouterRequestError, requestChatCompletion } from "@/lib/openrouter";
+import type { Entitlement } from "@/lib/tier-features";
 import type { CollectedFile } from "./collect";
 import {
+  addScanUsage,
   MAX_FILE_CHARS_FOR_TRIAGE,
   TRIAGE_BATCH_SIZE,
   type ScanBudget,
@@ -144,6 +146,7 @@ function parseBatchResponse(
 /** Runs Tier 1 over one batch. Never throws: failures escalate the batch. */
 export async function triageBatch(
   batch: CollectedFile[],
+  entitlement: Entitlement,
   budget: ScanBudget,
   signal?: AbortSignal,
 ): Promise<TriageVerdict[]> {
@@ -157,14 +160,19 @@ export async function triageBatch(
   }
 
   try {
-    const raw = await requestChatCompletion({
-      model: SCAN_TRIAGE_MODEL,
+    const { content: raw, usage } = await requestChatCompletion({
+      // On the `best` model tier this is the same strong model the deep pass
+      // uses, so the surface stage stops being a cheap filter that can drop
+      // a real issue and becomes a review in its own right. The prompt is
+      // unchanged either way — its job is still a verdict per file.
+      model: entitlement.models.triage,
       system: TRIAGE_SYSTEM_PROMPT,
       messages: [{ role: "user", content: buildBatchPrompt(batch) }],
       // Enough for a one-line verdict per file and nothing more.
       maxTokens: 500,
       signal,
     });
+    addScanUsage(budget, usage);
 
     const parsed = parseBatchResponse(raw, batch);
     if (parsed) return parsed;

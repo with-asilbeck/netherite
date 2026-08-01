@@ -6,9 +6,21 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:billing": "node scripts/billing-entitlement-test.mjs && node scripts/billing-verify-variants.mjs && node scripts/billing-checkout-test.mjs && node scripts/billing-webhook-test.mjs && node scripts/billing-rls-test.mjs && node scripts/billing-enforcement-test.mjs",
+    "verify:billing:entitlement": "node scripts/billing-entitlement-test.mjs",
+    "verify:billing:variants": "node scripts/billing-verify-variants.mjs",
+    "verify:billing:checkout": "node scripts/billing-checkout-test.mjs",
+    "verify:billing:webhooks": "node scripts/billing-webhook-test.mjs",
+    "verify:billing:rls": "node scripts/billing-rls-test.mjs",
+    "verify:billing:enforcement": "node scripts/billing-enforcement-test.mjs",
+    "verify:tiers": "node scripts/tier-config-test.mjs && node scripts/tier-resolution-test.mjs && node scripts/tier-enforcement-test.mjs",
+    "verify:tiers:config": "node scripts/tier-config-test.mjs",
+    "verify:tiers:resolution": "node scripts/tier-resolution-test.mjs",
+    "verify:tiers:enforcement": "node scripts/tier-enforcement-test.mjs"
   },
   "dependencies": {
+    "@lemonsqueezy/lemonsqueezy.js": "^4.0.0",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.8",
     "@vercel/functions": "^3.7.6",

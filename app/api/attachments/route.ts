@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { checkUploadRateLimit } from "@/lib/rate-limit";
+import { releaseUsage, reserveUsage } from "@/lib/usage";
 
 const BUCKET = "chat-attachments";
 
@@ -280,7 +281,50 @@ export async function POST(request: Request) {
     }
     return handleImageUpload(supabase, user.id, file);
   }
-  return handleFileUpload(supabase, user.id, file);
+
+  // ── Tier enforcement: `snippet` ───────────────────────────────────────
+  // Attaching a code file is the concrete "analyse this code for me" action
+  // the product has today, so it's what the snippet allowance meters. The
+  // model call itself happens later, when the composer sends the message
+  // with this text inlined — metering the submission rather than that call
+  // keeps the block early, before a 2MB upload is even stored.
+  //
+  // Known gap, deliberate and documented rather than papered over: pasting
+  // the same code straight into the chat box skips this counter, because
+  // the server cannot reliably tell a pasted snippet from a question. That
+  // path is not unmetered — it still spends a `chat` unit and is still
+  // capped — it just spends the wrong allowance. Closing it properly needs
+  // the dedicated snippet endpoint from CLAUDE.md's feature list, at which
+  // point this reservation moves there.
+  //
+  // As everywhere else, the id is the server-verified session id, never a
+  // form field.
+  // The snippet cap is monthly and advertised on every tier, so a refusal
+  // here is always the specific upgrade prompt — `capIsVisible` returns true
+  // for it unconditionally, and the invisible-ceiling branch that
+  // /api/chat needs has no counterpart here.
+  const reservation = await reserveUsage(user.id, "snippet");
+  if (!reservation.ok) {
+    return Response.json(
+      { error: reservation.message },
+      {
+        status: reservation.reason === "limit_exceeded" ? 402 : 503,
+        ...(reservation.reason === "limit_exceeded"
+          ? { headers: { "Retry-After": String(reservation.retryAfterSeconds) } }
+          : {}),
+      },
+    );
+  }
+
+  const response = await handleFileUpload(supabase, user.id, file);
+
+  // A rejected file (wrong type, too large, not UTF-8) or a failed storage
+  // write means no analysis will happen, so the unit goes back.
+  if (!response.ok) {
+    await releaseUsage(reservation.eventId);
+  }
+
+  return response;
 }
 
 export async function DELETE(request: Request) {

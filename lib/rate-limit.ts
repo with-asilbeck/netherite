@@ -127,3 +127,15 @@ const repoScanRunLimiter = new FixedWindowLimiter(HOUR_MS, 3, MAX_TRACKED_KEYS, 
 export function checkRepoScanRunRateLimit(userId: string): RateLimitResult {
   return repoScanRunLimiter.check(userId);
 }
+
+// Starting a checkout. Cheap for us but not for the store: every call is a
+// write against the Lemon Squeezy API, which rate-limits per *store*
+// (observed: 100 requests per minute). One signed-in account looping this
+// endpoint would therefore spend the whole store's budget and stop everyone
+// else from being able to pay. 20/hour is far above any real purchasing
+// pattern — nobody starts a checkout twenty times in an hour on purpose.
+const checkoutLimiter = new FixedWindowLimiter(HOUR_MS, 20, MAX_TRACKED_KEYS, CLEANUP_INTERVAL_MS);
+
+export function checkCheckoutRateLimit(userId: string): RateLimitResult {
+  return checkoutLimiter.check(userId);
+}

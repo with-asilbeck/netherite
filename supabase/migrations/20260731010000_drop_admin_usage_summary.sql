@@ -1,0 +1,25 @@
+-- Drops the owner-facing usage rollup.
+--
+-- 20260731000000_usage_tracking.sql created admin_usage_summary() for the
+-- /admin/usage dashboard. That dashboard was removed the same day, leaving
+-- the function with no caller. It was already locked down — SECURITY INVOKER,
+-- EXECUTE revoked from anon and authenticated, granted only to service_role —
+-- so it was inert rather than dangerous, but an unused function that returns
+-- every user's activity is not worth keeping around for a grant to be
+-- widened by accident later.
+--
+-- Written as a follow-up rather than by editing 20260731000000, because that
+-- migration has already been applied to the live project and should keep
+-- recording what was actually run.
+--
+-- Nothing depends on this function, so no CASCADE: if this errors because
+-- something does depend on it, that is worth seeing rather than silently
+-- dropping the dependent object too.
+--
+-- Deliberately NOT dropped here:
+--   - reserve_usage()      — the enforcement path, still called on every
+--                            metered request
+--   - current_month_usage() — powers /usage, called by the signed-in user
+--   - usage_events / user_tiers and their RLS policies
+
+drop function if exists public.admin_usage_summary(timestamptz);

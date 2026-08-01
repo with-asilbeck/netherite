@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { resolveChatEntryPath } from "@/lib/chat-entry";
+import { CHAT_APP_PATH } from "@/lib/chat-entry";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -30,12 +30,7 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
   }
 
-  const target = await resolveChatEntryPath(supabase, user.id);
-
-  if ("error" in target) {
-    console.error("[auth/callback] Couldn't resolve chat entry:", target.error);
-    return NextResponse.redirect(`${origin}/login?error=exchange_failed`);
-  }
-
-  return NextResponse.redirect(`${origin}${target.path}`);
+  // Always a fresh draft, never the most recent conversation — and never a
+  // newly created one. Signing in no longer writes anything.
+  return NextResponse.redirect(`${origin}${CHAT_APP_PATH}`);
 }

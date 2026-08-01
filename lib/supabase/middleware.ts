@@ -1,7 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED_PATHS = ["/chat"];
+// Anonymous requests to these paths are redirected to login. That is only a
+// signed-in check — any per-route authorization belongs in the route itself,
+// which is where CLAUDE.md requires it to run.
+const PROTECTED_PATHS = ["/chat", "/usage", "/account"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

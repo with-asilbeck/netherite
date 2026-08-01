@@ -4,7 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/server";
-import { resolveChatEntryPath } from "@/lib/chat-entry";
+import { CHAT_APP_PATH } from "@/lib/chat-entry";
 import { ChatView } from "@/app/chat/chat-view";
 import { GuestBanner } from "@/components/guest-banner";
 
@@ -20,13 +20,10 @@ export default async function TryPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Already signed in — guest mode doesn't apply, send them to their real,
-  // persisted chat instead: most recent conversation, or a new one.
+  // Already signed in — guest mode doesn't apply, so send them to the real,
+  // persisted chat: a fresh draft, with their history in the sidebar.
   if (user) {
-    const target = await resolveChatEntryPath(supabase, user.id);
-    // On failure fall through to /chat, which renders the error inside the
-    // chat shell rather than dropping a signed-in user into guest mode.
-    redirect("error" in target ? "/chat" : target.path);
+    redirect(CHAT_APP_PATH);
   }
 
   return (

@@ -1,7 +1,17 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { resolveChatEntryPath } from "@/lib/chat-entry";
+import { ChatView } from "@/app/chat/chat-view";
 
+/**
+ * The draft chat: an empty chat UI with no conversation id, no database row
+ * and no token behind it. This is where logging in lands, and where "New
+ * chat" goes.
+ *
+ * It used to redirect to the most recent conversation, creating one first if
+ * there were none — so signing in wrote a row whether or not the user went on
+ * to say anything. Nothing here touches the database: the conversation is
+ * created by the first message the user sends (app/api/chat/route.ts).
+ */
 export default async function ChatIndexPage() {
   const supabase = await createClient();
   const {
@@ -12,15 +22,7 @@ export default async function ChatIndexPage() {
     redirect("/login");
   }
 
-  const result = await resolveChatEntryPath(supabase, user.id);
+  const userLabel = user.email?.split("@")[0] ?? "there";
 
-  if ("error" in result) {
-    return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-        {result.error}
-      </div>
-    );
-  }
-
-  redirect(result.path);
+  return <ChatView userLabel={userLabel} userId={user.id} />;
 }

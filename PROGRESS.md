@@ -1,5 +1,504 @@
 # Progress
 
+## 2026-08-01 — One tier resolver
+
+`lib/get-user-tier.ts` is now the only place a user's tier is worked out.
+Everything that needs to know what somebody is entitled to goes through it:
+the three metered routes, the feature gates, the usage dashboard, and the
+account page.
+
+**What moved.** `getUserTier` used to live in `lib/usage/index.ts`, and two
+pages did their own lookup on top of it — `lib/usage/queries.ts` and
+`lib/billing/queries.ts` each read `subscriptions` themselves and called
+`resolveEffectiveTier` separately. The *rules* were already shared, so
+nothing could disagree about what a status meant, but there were three
+places that fetched the row and three places that could drift. There is now
+one.
+
+**The rules did not change.** No row → free; active → the row's tier;
+cancelled → the tier until `current_period_end`, then free; past_due → the
+tier through the 8-day grace window; expired and refunded → free
+immediately, regardless of time left on the clock. Unknown status, unknown
+tier, and unparseable dates all fail closed to free.
+
+**Return shape.** `{ tier, status, cancellingSoon, currentPeriodEnd, source,
+subscription }`. Only `tier` is an enforcement input. `cancellingSoon` is
+for the account page's "Cancelling" pill and is deliberately not consulted
+by any cap — `tier` already reflects the access the account has, and a
+second flag that enforcement also read would be a second source of truth.
+`source` (`subscription` / `override` / `default`) exists so "why does this
+account have Pro" is answerable from a log line.
+
+**Caching.** `cache()` from React, which the bundled Next docs confirm is
+scoped to one request with no sharing between requests, keyed on the user
+id. Two calls for one user in a request cost one query; an upgrade or a
+downgrade takes effect on the very next request. That property is asserted,
+not assumed — the resolution suite writes a row, reads, rewrites it, and
+reads again.
+
+**Deliberately left alone:** `lib/billing/store.ts:166` still calls
+`effectiveTier` directly, in the guard that stops a new subscription
+overwriting one still granting access. That is the webhook reasoning about a
+row it has already fetched, inside the writer — not a second answer to
+"what is this user's tier". It uses the same rule function, so it cannot
+drift.
+
+**Verified — 483 assertions across nine suites, all passing** once
+`20260801030000_usage_windows.sql` was applied. The new
+resolution suite creates real users with real subscription rows and reads
+the tier back through the same resolver the routes call: free (no row) →
+free, basic/active → basic, pro/active → pro, pro/cancelled with the period
+still open → **pro** with `cancellingSoon: true`, max/refunded → **free**.
+Plus cancelled-and-expired, expired-with-time-left, past_due inside and
+outside the grace window, the override direction, and the no-stale-tier
+property. `tsc --noEmit`, `eslint`, and `next build` clean.
+
+**Two false alarms during verification, both in the tests rather than the
+code**, recorded because the first one wasted a real debugging pass:
+
+- `/api/repo-scan/run` returned 404 for every request, including anonymous
+  ones that should have been 401 — while `/api/repo-scan` and `/api/chat`
+  worked, `next build` listed the route, and `tsc` was clean. It was a
+  stale Turbopack cache in `.next`; deleting it and restarting `next dev`
+  fixed it with no code change. Worth knowing that a dev-server 404 on one
+  route is not evidence about that route's code.
+- Three "request body can't buy a tier" assertions failed with 429 instead
+  of 402. `checkRepoScanRunRateLimit` allows 3 scans per hour per user and
+  runs *before* the tier check, so reusing one account meant the fourth
+  attempt never reached enforcement at all. Each attempt now gets its own
+  user — otherwise the assertion would have been passing on the strength of
+  a rate limiter rather than the thing it claims to test.
+
+## 2026-08-01 — Lemon Squeezy billing
+
+Paid plans, end to end: checkout, webhooks, the pricing page, an account page,
+and the wiring that makes a subscription actually change what a user can do.
+Lemon Squeezy rather than the Stripe named in CLAUDE.md (now updated) — it is
+merchant of record, so VAT and sales tax are its problem, not ours.
+
+**Tiers are `free / basic / pro / max`.** The entry paid tier was called
+`standard` in `lib/usage/tiers.ts`; the products in the store are called Basic.
+Renamed in the migration rather than mapped, because two names for one tier is
+how a cap eventually gets read from the wrong row. `user_tiers` was empty in
+production, so nothing moved.
+
+**`subscriptions` is the source of truth, and only the webhook writes it.**
+Both new tables are readable by their owner and writable by nobody holding the
+anon key — no insert/update/delete policy at all, which with RLS on is a
+denial. `user_tiers` survives as a manual comp override that can only ever
+*raise* a tier, so a forgotten row there can't demote somebody who is paying.
+
+**`subscription_payment_success` cannot change a tier or a status.** It fires
+on the first payment and on every renewal, and on renewal it says nothing
+about entitlement — acting on it would re-grant a plan that a cancellation or
+a refund had already taken away. There is one function that writes
+entitlement and it throws for any event not in `ENTITLEMENT_EVENTS`, so the
+property is structural rather than a convention. Payment success writes a
+`payment_history` row and nothing else.
+
+**Security review found one real vulnerability, confirmed against the live
+store rather than reasoned about.** Lemon Squeezy accepts custom data as
+query parameters on a product's *public* buy URL —
+`?checkout[custom][user_id]=<anyone>` lands in the checkout state and comes
+back in a genuinely signed webhook. Since `subscription_created` upserts on
+`user_id`, anybody could have bought Basic in another user's name,
+overwritten their subscription row, then asked for a refund: a Max customer
+dropped to Free for the price of a refundable $9.99. Signature verification
+does not catch this, because the event really is from Lemon Squeezy. Fixed by
+sending a keyed digest of the user id alongside it (`uid_sig`) and refusing to
+attribute any event without a valid one; plus a second guard that refuses to
+replace a subscription that is still granting access. Three tests in the
+webhook suite are that attack.
+
+Three smaller findings, all fixed: `/api/checkout` had no rate limit (a
+signed-in user could exhaust the *store's* Lemon Squeezy API quota, ~100/min,
+and stop everyone else paying — now 20/hour per user, plus an `Origin`
+check); `formatPrice` passed a webhook-supplied currency straight to
+`Intl.NumberFormat`, which throws `RangeError` on anything that isn't ISO 4217
+and would have 500'd a user's whole billing page (normalised at the boundary
+*and* at render); and a real account's uuid had ended up in a committed test
+script.
+
+**Verified — 260 assertions across six suites, against the real test-mode
+store and the real database.** `npm run verify:billing`, with `npm run dev` up.
+
+- **Entitlement (28)** — imports the real module, not a copy. Cancelled keeps
+  its tier until the period ends and not a day longer; past_due keeps it
+  through an 8-day grace window; expired and refunded grant nothing even with
+  time left on the clock; unknown status, unknown tier, unparseable date and
+  null row all resolve to free.
+- **Variants (31)** — all six env ids resolve to the right published product,
+  bill on the right interval, and charge exactly the price in `plans.ts`.
+  Also asserts the API key is a test-mode key.
+- **Checkout (86)** — creates all six real hosted checkouts, loads each page
+  (200, test mode, right price, prefilled email), and confirms each carries a
+  valid attribution signature that does *not* validate for any other user id.
+  `/api/checkout` refuses anonymous callers, ignores injected
+  `userId`/`price`/`variantId`, and rejects a `tier` crafted to build an env
+  var name (`../../SUPABASE_SERVICE_ROLE_KEY`).
+- **Webhooks (79)** — every event posted with a real HMAC signature at the
+  running route, every assertion read back out of Supabase. Five bypass
+  attempts refused, including a *valid* signature over a tampered body — the
+  case a re-serialise-then-compare implementation lets through. Then each
+  event's exact row effect, idempotent redelivery, a renewal payment while
+  cancelled leaving the plan untouched, a refund revoking immediately and
+  marking only its own invoice, and a superseded subscription's events being
+  ignored.
+- **RLS (23)** — with two real user JWTs, not the service role. A user reads
+  their own row and gets zero rows for anyone else's; cannot promote
+  themselves, cannot blanket-update every row, cannot insert, cannot delete,
+  cannot rewrite their own payment history, cannot write `user_tiers`.
+  Anonymous gets nothing.
+- **Enforcement (13)** — `getUserTier`, the function every metered route calls
+  before spending money, against the live database: status gates access, not
+  just the tier column.
+
+`tsc --noEmit`, `eslint`, and `next build` all clean.
+
+**One false alarm worth recording,** in the spirit of the note at the bottom of
+this file: the enforcement suite first reported "past_due inside the grace
+window keeps max" as failing. The assertion was wrong, not the code — it used
+a period end 30 days in the past against an 8-day window, so `free` was the
+right answer. Now tested at both two days and thirty.
+
+**Not done, and deliberately.** Nobody has typed a card into one of those
+checkout pages: that needs a browser, and real webhook delivery needs a public
+URL, so the event verification above is signed replay rather than Lemon
+Squeezy's own delivery. The handler and its database effects are fully
+covered; what is not covered is Lemon Squeezy actually sending the request.
+Before going live: register the production webhook URL in the store, subscribe
+it to the seven handled events, switch to a live-mode API key, and make one
+real purchase. `LEMONSQUEEZY_STORE_ID` is currently the store *URL* rather
+than a bare id — `normalizeStoreId` handles both, but it is worth fixing at
+the source.
+
+## 2026-08-01 — Lazy chat creation
+
+A conversation is now created by the first message sent in it, not before.
+Logging in and pressing "New chat" write nothing.
+
+**Before**, both created a row up front. Five presses of "New chat" without
+sending anything left five unused conversations, plus one more from the login
+redirect — measured, not assumed: 6 rows, 0 messages, and after a refresh a
+Recents list of six identical "New chat" entries. **After**: 0 rows, and
+Recents stays empty.
+
+**The draft state.** `/chat` renders an empty chat view that owns no
+conversation id, no database row and no nanoid token. It is where the OAuth
+callback lands, where `/try` sends an already-signed-in user, and where "New
+chat" goes.
+
+- `app/chat/page.tsx`: was a redirect to the most recent conversation
+  (creating one first if there were none); now renders the draft. Touches the
+  database only to read the session.
+- `lib/chat-entry.ts`: `resolveChatEntryPath()` is gone — there is nothing
+  left to resolve. It exported the "create a conversation if the user has
+  none" behaviour that made simply signing in write a row. Replaced by
+  `CHAT_APP_PATH`, a constant, so `/try` and `/auth/callback` agree by
+  construction.
+- `components/new-chat-button.tsx`: no longer a form posting a server action.
+  It navigates to `/chat` **and** bumps a reset token, because pressing it
+  while already on a draft changes no route — a navigation alone would leave
+  what was typed sitting there.
+- `app/chat/actions.ts`: `createConversationAction` deleted. An action whose
+  job is to create an empty conversation is the thing that caused this.
+
+**Creation on first send.** `POST /api/chat` (and `/api/repo-scan/run`) now
+accept a missing `conversationId` from a signed-in user, meaning "this is a
+draft". They generate the nanoid, write the conversation and the first
+message, and return the id in an `X-Conversation-Id` response header. The
+client swaps its URL to `/chat/<token>` with `history.replaceState` — not a
+router navigation, which would tear down the view while the reply is still
+streaming into it — and adds the row to Recents.
+
+The two inserts go through `create_conversation_with_message()`, a plpgsql
+function running as the caller, so they share one transaction: a conversation
+that exists without its first message is exactly the empty row this change
+exists to stop creating, and two round trips from the route would leave a
+window for one. It is `SECURITY INVOKER` and takes no user id — it reads
+`auth.uid()` — so RLS still applies and a caller can't attribute a
+conversation to anyone else.
+
+Creating a conversation therefore costs a chat unit, because it can only
+happen as part of a message that has already passed tier enforcement.
+Hammering the endpoint to fill the table now runs into the monthly chat cap
+first, which the old server action had no equivalent of.
+
+**Unsent drafts** survive a refresh: the composer's text is written to
+`localStorage` under `netherite:chat-draft:<user id>` as it's typed, restored
+on mount, and cleared once the conversation has actually been created.
+Deliberately *not* cleared at the moment of sending — if the send fails before
+the conversation exists, a refresh should still bring the text back. Keyed by
+user id so a shared browser never shows one account's half-written message to
+the next.
+
+**Recents** only lists conversations that have at least one message
+(`chat_messages!inner(...)` in `app/chat/layout.tsx`). That is a defensive
+check rather than the mechanism: with creation now tied to the first message,
+an empty conversation shouldn't exist, and if a future change makes one it
+stays out of the sidebar instead of appearing as a phantom the user can't get
+rid of. Doing it in the join means the limit of 30 counts real conversations.
+
+**New files**
+
+- `components/chat-session.tsx`: holds the Recents list and the "New chat"
+  reset token, wrapping the sidebar and the chat view together. The list moved
+  here from `ChatSidebar` because sending the first message in a draft has to
+  add a row without navigating anywhere. Reading it without the provider
+  (guests on `/try`) yields no-ops rather than a crash.
+- `supabase/migrations/20260801000000_create_conversation_with_message.sql`
+- `supabase/migrations/20260801010000_delete_empty_conversations.sql`: the
+  one-time cleanup. Not a trigger and not scheduled — standing cleanup logic
+  would quietly paper over a regression.
+
+**Verified** against the live database, on a production build (port 3111,
+leaving the dev server on 3000 alone), driving a real browser with a real
+session:
+
+- **"New chat" ×5 → 0 rows**, Recents empty, before and after a refresh. The
+  same script against the pre-change build produced 6 rows.
+- The Recents query, run as the signed-in user so RLS applied: a conversation
+  with messages comes back with its first user message, one with **no**
+  messages does not come back at all, and the embedded limit is per
+  conversation (a conversation with 8 messages still yields 3, and doesn't
+  starve the others). 7/7.
+- Regressions, 9/9: an existing conversation still loads its history and
+  appends without creating a second one or changing the URL; deleting the last
+  conversation lands on an empty draft rather than creating a replacement; a
+  guest on `/try` still gets a reply and still persists nothing.
+- Unsent text is written to `localStorage` and comes back after a refresh,
+  with no row created by typing.
+- The failure path releases its reserved usage unit: two sends that failed
+  (against a database without the new function yet) left `usage_events`
+  untouched at 0.
+
+**Both migrations applied and verified.**
+
+- The cleanup deleted exactly one row — the empty conversation on the real
+  account — and kept the one with messages. Zero empty conversations remain.
+- **First-message flow, 19/19** in a browser: landing creates no row; unsent
+  text survives a refresh without creating one; sending creates exactly one
+  conversation whose id matches the token in the URL, saves exactly one user
+  message, clears the stored draft, and adds one row to Recents labelled from
+  the message; a second message joins the *same* conversation; "New chat"
+  returns to an empty draft and creates nothing.
+- **`create_conversation_with_message()` probed directly through PostgREST
+  with a real user JWT, 16/16** — the Next app bypassed entirely, the way
+  someone manipulating requests would. Anonymous callers are refused
+  (`42501`). The conversation and message are attributed to the caller's own
+  `auth.uid()`. An extra `p_user_id` argument isn't accepted (`PGRST202`) —
+  there is no parameter to point at another account. A malformed id, a junk
+  id (`'; drop table conversations; --`) and empty content are all rejected,
+  and no rejected call left a row behind. A duplicate id fails and rolls back
+  *both* inserts, leaving the original with one message. Being
+  `SECURITY INVOKER` holds up: the caller still can't read another account's
+  conversation, and can't post into one (`42501`).
+- **Edge cases, 12/12**: the URL the client swapped in with `replaceState` is
+  a genuine route — hard-reloading it returns HTTP 200 with the conversation
+  and both messages from the database. Pressing "New chat" while the first
+  reply is still streaming resets the draft, doesn't strand or duplicate the
+  conversation that was already created, leaves it readable with its message,
+  and doesn't leave the composer stuck disabled.
+- The 5-click test and the 9/9 regressions were both re-run after the
+  migrations: still 0 rows from five clicks.
+
+All probe data removed; the project holds one conversation, with messages,
+and no empty ones.
+
+## 2026-07-31 — Usage tracking and tier enforcement
+
+Every LLM call is now metered against a per-month, per-tier cap before it
+runs, recorded with the real cost OpenRouter reports, and visible to the user
+on `/usage`.
+
+**Caps** (`lib/usage/tiers.ts`, the single source of truth — enforcement and
+the dashboard read the same table):
+
+| tier | chat/mo | snippet/mo | repo_scan/mo |
+| --- | --- | --- | --- |
+| free | 200 | 10 | 2 |
+| standard | 2,000 | 150 | 25 |
+| pro | 8,000 | 750 | 100 |
+| max | 40,000 | 5,000 | 500 |
+
+Chat is a high number rather than `null` on purpose: the dashboard always has
+a denominator and no code path has unbounded cost.
+
+**What changed**
+
+- `supabase/migrations/20260731000000_usage_tracking.sql` (new): `usage_events`
+  (user_id, action_type, tokens_used, estimated_cost_usd, model, created_at)
+  and `user_tiers`. **Both are RLS-enabled with a select-own policy and no
+  insert/update/delete policy at all** — a missing policy under RLS is a
+  denial, so nobody holding the anon key can write either table. Every write
+  goes through the service-role key. That is what stops the two obvious
+  attacks: setting your own tier to `max`, and deleting your own usage rows
+  to reset the month.
+- `reserve_usage(user_id, action_type, limit)`: counts and inserts under a
+  `pg_advisory_xact_lock` keyed on (user, action). Counting in the app and
+  then inserting would let N parallel requests all read "9 used of 10" and
+  all proceed — trivially reachable on purpose, and worth real money on
+  `repo_scan`. `SECURITY INVOKER` and `EXECUTE` revoked from anon/authenticated,
+  so even a mistaken grant leaves the insert blocked by RLS.
+- `lib/supabase/admin.ts` (new): service-role client, guarded by a
+  `typeof window` throw and a non-`NEXT_PUBLIC_` env var.
+- `lib/usage/index.ts` (new): `reserveUsage` / `releaseUsage` /
+  `recordUsageCost`. **Fails closed** — if the ledger can't be reached the
+  request is refused, because otherwise "break the usage check" becomes the
+  cheapest route to unmetered calls. Costs little availability: these routes
+  already need Supabase up for `auth.getUser()`.
+- `lib/openrouter.ts`: reads the `usage` object OpenRouter returns on every
+  call (`cost`, `total_tokens`) — real billed cost, not a hardcoded price
+  table, which is the point of the feature. Streaming carries it in the final
+  SSE message, hence the `onUsage` callback. Missing figures stay `null`, never
+  `0`, so "unknown" can't masquerade as "free".
+- `app/api/chat/route.ts`, `app/api/attachments/route.ts`,
+  `app/api/repo-scan/run/route.ts`: reserve after validation and before the
+  model call; release on failures that did no work; record cost after. The
+  user id is always the one from `supabase.auth.getUser()` — no route reads a
+  user id, tier, or count from a request body.
+- `lib/repo-scan/config.ts`: `ScanBudget` accumulates usage plus a
+  `modelCalls` counter. A scan is dozens of calls across two models, so the
+  route writes one row with the total. The refund decision keys on
+  `modelCalls`, **not** on whether cost came back — otherwise a provider that
+  omits `usage` would make every scan free.
+- `app/usage/page.tsx` (new): own quota and cost. Reads through the *user's*
+  client so RLS scopes it — a page that only shows you your own data has no
+  business holding a service-role key.
+- `lib/supabase/middleware.ts`: `/usage` added to `PROTECTED_PATHS` — an
+  anonymous request is redirected to login rather than reaching the page.
+
+**Removed same day**
+
+- The owner-facing `/admin/usage` dashboard and its supports:
+  `app/admin/usage/page.tsx`, `lib/usage/admin-access.ts` (the
+  `ADMIN_USER_IDS` gate), and `getAdminUsage`/`AdminUsageRow`/`AdminUsage`
+  plus the email and tier lookups in `lib/usage/queries.ts`. `ADMIN_USER_IDS`
+  is no longer read anywhere, so it does not need setting in any environment.
+- `supabase/migrations/20260731010000_drop_admin_usage_summary.sql` (new)
+  drops the `admin_usage_summary` SQL function, and its type is gone from
+  `lib/supabase/usage-schema.ts`. It was already inert — `SECURITY INVOKER`,
+  `EXECUTE` revoked from anon and authenticated, granted only to
+  `service_role` — but an unused function that returns every user's activity
+  isn't worth leaving for a grant to be widened by accident later. Written as
+  a follow-up rather than by editing `20260731000000`, which has already been
+  applied and should keep recording what was actually run.
+- Not dropped: `reserve_usage()` (the enforcement path) and
+  `current_month_usage()` (powers `/usage`).
+- Untouched: metering itself. Every LLM route still reserves, releases, and
+  records cost, and `/usage` still shows the user their own numbers.
+
+**Deployment**
+
+1. `20260731000000_usage_tracking.sql` applied to the live project ✅
+2. `20260731010000_drop_admin_usage_summary.sql` applied ✅ — verified against
+   the live database: `admin_usage_summary` now returns PGRST202 ("could not
+   find the function") even to `service_role`, which was the only role that
+   ever had `EXECUTE`. `reserve_usage()` still allows under the cap and blocks
+   at it, `current_month_usage()` still answers for a signed-in user, and the
+   RLS denials on `usage_events` are unchanged (no insert, no delete, own-row
+   read still works). `/usage` renders correctly for a signed-in user and
+   still 307s to `/login` anonymously.
+3. **Still to do:** `SUPABASE_SERVICE_ROLE_KEY` needs to exist in the Vercel
+   environment. It was already in `.env.local` but had never been used by any
+   code before this. If it is missing in production every metered action
+   returns 503 rather than running unmetered — the safe direction, but the app
+   is down until it is set.
+
+**Verified**
+
+- `tsc --noEmit`, `eslint` on all touched files, and `next build` clean.
+- `/usage` builds as dynamic (`ƒ`), not prerendered.
+- **`/usage` is not reachable anonymously, and is guarded twice.** An
+  anonymous GET returns `307 → /login`. So does every middleware-bypass shape
+  tried: trailing slash, an RSC payload request (`RSC: 1` + `?_rsc=`), and
+  `x-middleware-subrequest: proxy` / `: middleware` (CVE-2025-29927 — 16.2.11
+  is patched). Then, to check the page does not merely inherit protection
+  from the proxy, `PROTECTED_PATHS` was temporarily cut to `["/chat"]` and
+  rebuilt: an anonymous GET `/usage` **still** returned `307 → /login`, from
+  the page's own `if (!usage) redirect("/login")`. `PROTECTED_PATHS` was
+  restored and rebuilt afterwards. The middleware entry is convenience; the
+  page-level check is the boundary, which is the arrangement CLAUDE.md asks
+  for.
+- **20/20 against the live database**, driving raw PostgREST with a real
+  authenticated JWT — i.e. bypassing the Next.js app entirely, which is what
+  "manipulating requests directly" actually means. With a genuine user token
+  it is not possible to: insert a usage row (own or someone else's), delete
+  or backdate own rows, insert or update own tier to `max`, call
+  `reserve_usage` with an inflated limit, call `admin_usage_summary`, or read
+  another user's rows. Reading own rows still works, so the dashboard
+  functions.
+- **The race is real and the lock holds**: 20 parallel reservations against a
+  limit of 5 allowed exactly 5, with exactly 5 rows in the ledger afterwards
+  and no errors.
+- **10/10 end-to-end** against a running dev server with a forged-but-valid
+  SSR session cookie: an allowed chat writes exactly one row with real
+  figures (`tokens=622, cost=0` — the advisor model is `:free`, so zero is
+  correct and is a *reported* zero, not a missing one); at the cap the route
+  returns 402 with the upgrade message and writes neither a usage row nor a
+  chat message; flipping the tier to `standard` lets the same user straight
+  through; `repo_scan` blocks before any clone; and adding
+  `tier`/`user_id`/`limit`/`skipUsageCheck` to the request body changes
+  nothing.
+- Test users and rows were removed afterwards; `usage_events` and
+  `user_tiers` confirmed empty.
+- **`/usage` driven in a real browser** (Playwright, production build on
+  :3111). 4,202 seeded events across five users on all four tiers, light and
+  dark, 1440px and 390px. All 200, **0px horizontal page overflow
+  everywhere**. `/usage` read through RLS agreed exactly with a service-role
+  rollup of the same data ($1.46, 412/88/31 for the same user), which is the
+  cross-check that matters — two different code paths, two different key
+  scopes, same numbers. All three meter states render: normal, near-limit
+  (amber, "3 left this month"), exhausted (red, "Limit reached") plus the
+  upgrade callout.
+- Seeded users and rows removed again afterwards; both tables back to 0.
+- **8/8 on the `snippet` path** (`POST /api/attachments`, real multipart
+  upload, real session): a valid code file spends exactly one snippet unit and
+  no other kind; a rejected file (disallowed extension) leaves the count
+  unchanged, so the release path works; at 10/10 the route returns 402 naming
+  the snippet limit and the upgrade. Storage object cleaned up.
+- **4/4 on the scan refund branch**: a valid GitHub URL for a repo that
+  doesn't exist reserves, fails to clone, makes zero model calls, and refunds
+  the unit — twice in a row, with the free tier's 2 scans still intact
+  afterwards. This is the branch with real quota consequences (a bug here
+  would mean every scan is free), which is why it was worth triggering
+  deterministically rather than reasoning about.
+
+**Still not verified**
+
+- **A successful scan's cost aggregation.** The `modelCalls > 0` branch —
+  summing tokens and dollars across dozens of calls spanning two models into
+  one `usage_events` row — has never run. It is reporting, not enforcement: a
+  bug there produces wrong numbers on `/usage`, not free scans. Testing it
+  costs real OpenRouter credits and a few minutes, so it's left for a real
+  scan rather than done unilaterally.
+- **`releaseUsage` when OpenRouter fails mid-chat-request.** Needs an induced
+  upstream failure to reach.
+- **Anything on Vercel.** Nothing has been deployed; see Deployment above.
+
+**Fixed during verification**
+
+- `toLocaleString()` with no locale follows the *server's* ICU default, not
+  the reader's, and rendered "Upgrade to Standard for 2 000 per month" — a
+  narrow no-break space inside otherwise English copy. All call sites now pin
+  `en-US` via `formatCount()`.
+
+**Open, from the security review**
+
+- Guest chat stays unmetered by design (no account to attribute to), so
+  logging out is a way around the `chat` cap specifically: 15/hour per IP
+  ≈ 10,800/month versus a free tier's 200. Zero cost exposure today because
+  the advisor model is `:free`, but that stops being true the moment that
+  model id changes.
+- Pasting code into the composer spends a `chat` unit rather than a `snippet`
+  one; the server can't reliably tell a pasted snippet from a question. No
+  path is unmetered, it's the wrong allowance. Closing it properly needs the
+  dedicated snippet endpoint from CLAUDE.md's feature list.
+- A scan that fails before any model call (bad URL, clone failure, no
+  reviewable files) refunds its unit, so clone-only cost isn't charged
+  against quota — bounded only by the existing 3/hour limiter. Deliberate: a
+  typo'd URL otherwise costs a free user half their monthly allowance.
+
 ## 2026-07-29 — Clickable chat preview + one shared chat-entry path
 
 Made the landing page's "Ask Netherite" preview card a real entry point, and

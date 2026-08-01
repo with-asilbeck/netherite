@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -11,6 +12,9 @@ import {
 } from "react";
 import { MessageContent } from "@/components/message-content";
 import { MAX_REPO_URL_LENGTH, parseGitHubRepoUrl } from "@/lib/github-repo";
+import { CONVERSATION_ID_RE, conversationLabel } from "@/lib/conversations";
+import { CHAT_APP_PATH } from "@/lib/chat-entry";
+import { useChatSession } from "@/components/chat-session";
 
 type Message = {
   id: string;
@@ -66,6 +70,48 @@ const DEFAULT_REPO_QUESTION = "Please review this repository for security issues
 // space they have without text reaching the edge.
 const CHAT_COLUMN = "mx-auto w-full max-w-4xl px-4 sm:px-6";
 
+// Where a draft chat's unsent text is kept so a refresh before sending
+// doesn't throw it away. Keyed by user id: on a shared browser, signing in as
+// somebody else must not surface the previous account's half-written message.
+// Guests have no id and get no entry — their chat isn't persisted anywhere
+// else either.
+// Best-effort cleanup of an uploaded object that's no longer referenced.
+// Nothing user-visible depends on it succeeding, so failures stay quiet.
+// A repo attachment stores nothing, so there's never anything to delete.
+function discardStoredAttachment(previous: PendingAttachment | null) {
+  if (previous?.kind !== "file") return;
+  fetch("/api/attachments", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ storagePath: previous.storagePath }),
+  }).catch(() => {});
+}
+
+function draftStorageKey(userId: string | undefined): string | null {
+  return userId ? `netherite:chat-draft:${userId}` : null;
+}
+
+function readStoredDraft(key: string | null): string {
+  if (!key) return "";
+  try {
+    return window.localStorage.getItem(key) ?? "";
+  } catch {
+    // Private browsing, disabled storage, quota — a draft that can't be
+    // restored isn't worth breaking the chat over.
+    return "";
+  }
+}
+
+function writeStoredDraft(key: string | null, value: string) {
+  if (!key) return;
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // As above: best effort.
+  }
+}
+
 // Picks a fence longer than any run of backticks in the text, so file
 // content can't terminate its own code block early. A file containing "```"
 // would otherwise split out of the fence and land next to the user's
@@ -112,11 +158,18 @@ function buildMessageContent(trimmed: string, attachment: PendingAttachment | nu
 
 export function ChatView({
   userLabel,
-  conversationId,
+  userId,
+  conversationId: initialConversationId,
   initialMessages = [],
   banner,
 }: {
   userLabel: string;
+  /** Present for signed-in users only. Guests on /try get none. */
+  userId?: string;
+  /**
+   * Absent means this is a draft: no conversation exists yet, and none will
+   * until the first message is sent.
+   */
   conversationId?: string;
   initialMessages?: Pick<Message, "id" | "role" | "content">[];
   banner?: ReactNode;
@@ -136,13 +189,77 @@ export function ChatView({
   const menuContainerRef = useRef<HTMLDivElement>(null);
   const repoInputRef = useRef<HTMLInputElement>(null);
 
+  const { addConversation, draftResetToken } = useChatSession();
+
+  // Whether this view was mounted as the draft route (/chat) rather than a
+  // conversation (/chat/[id]). Fixed for the life of the mount — unlike the
+  // id below, which starts empty on a draft and fills in once the first
+  // message creates the conversation.
+  const isDraftRoute = initialConversationId === undefined;
+
+  const [conversationId, setConversationId] = useState<string | undefined>(
+    initialConversationId,
+  );
+
+  // The attachment as of right now, for the paths that have to clean up an
+  // upload from outside a render (replacing one, resetting the draft) and
+  // can't rely on what their closure captured.
+  const attachmentRef = useRef<PendingAttachment | null>(null);
+  // Lets "New chat" cut off a reply that's still streaming into a draft the
+  // user has just walked away from.
+  const sendAbortRef = useRef<AbortController | null>(null);
+
+  const draftKey = draftStorageKey(userId);
+  // Only a real draft stores unsent text. Once the conversation exists the
+  // composer belongs to it, and /chat/[id] never had a draft to begin with.
+  const isDraft = isDraftRoute && conversationId === undefined;
+
   // Uploads require a real account (Supabase Storage RLS is scoped to
-  // auth.uid()) — guests never see the attach button at all.
-  const canAttach = Boolean(conversationId);
+  // auth.uid()) — guests never see the attach button at all. A draft chat
+  // can attach: the upload is stored per user, not per conversation.
+  const canAttach = Boolean(userId);
+
+  function updateAttachment(next: PendingAttachment | null) {
+    attachmentRef.current = next;
+    setAttachment(next);
+  }
+
+  // Stable identity (it only touches a ref), so the effects and callbacks
+  // below can depend on it without being rebuilt every render.
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
+
+  // Restore whatever was typed but never sent.
+  //
+  // In an effect rather than in the initial state because localStorage only
+  // exists on the client: reading it during render would make the first
+  // client render disagree with the server-rendered empty textarea. This is
+  // the one-shot read of an external store that a mount effect is for — it
+  // runs once, and the composer is empty until it does, so the extra render
+  // is the intended two-pass hydration rather than a cascade.
+  useEffect(() => {
+    if (!isDraft) return;
+    const saved = readStoredDraft(draftKey);
+    if (!saved) return;
+    // Only if nothing has been typed in the meantime, so a restore can never
+    // overwrite the user.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see above: a one-time restore on mount, not a subscription
+    setInput((current) => current || saved);
+    requestAnimationFrame(resizeTextarea);
+    // Deliberately only on mount / when the key changes: this is a restore,
+    // not a subscription. `isDraft` is excluded on purpose — it flips to
+    // false the moment the conversation is created, and re-running then would
+    // do nothing useful.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, resizeTextarea]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -166,13 +283,6 @@ export function ChatView({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [menuOpen]);
-
-  function resizeTextarea() {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }
 
   function markAssistantError(assistantId: string, message: string) {
     setMessages((prev) =>
@@ -251,11 +361,9 @@ export function ChatView({
       setRepoInputOpen(false);
       setRepoUrl("");
       // Replacing an attachment drops the previous upload's only reference —
-      // delete it rather than leaving an orphan behind. Safe to read from the
-      // closure: the "+" button is disabled while a request is in flight, so
-      // this can't have changed underneath us.
-      discardStoredAttachment(attachment);
-      setAttachment({
+      // delete it rather than leaving an orphan behind.
+      discardStoredAttachment(attachmentRef.current);
+      updateAttachment({
         kind: "file",
         storagePath: data.storagePath,
         filename: data.filename ?? file.name,
@@ -315,8 +423,8 @@ export function ChatView({
       // Trust the server's normalized values over the locally parsed ones.
       setRepoInputOpen(false);
       setRepoUrl("");
-      discardStoredAttachment(attachment);
-      setAttachment({
+      discardStoredAttachment(attachmentRef.current);
+      updateAttachment({
         kind: "repo",
         slug: data.slug,
         canonicalUrl: data.canonicalUrl,
@@ -330,24 +438,77 @@ export function ChatView({
     }
   }
 
-  // Best-effort cleanup of an uploaded object that's no longer referenced.
-  // Nothing user-visible depends on it succeeding, so failures stay quiet.
-  // A repo attachment stores nothing, so there's never anything to delete.
-  function discardStoredAttachment(previous: PendingAttachment | null) {
-    if (previous?.kind !== "file") return;
-    fetch("/api/attachments", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ storagePath: previous.storagePath }),
-    }).catch(() => {});
-  }
-
   function removeAttachment() {
-    const current = attachment;
+    const current = attachmentRef.current;
     if (!current) return;
-    setAttachment(null);
+    updateAttachment(null);
     setAttachError(null);
     discardStoredAttachment(current);
+  }
+
+  /**
+   * Back to an empty draft: no messages, nothing typed, no conversation id,
+   * nothing saved. Called when "New chat" is pressed — including when it's
+   * pressed while already looking at a draft, where nothing navigates and
+   * this is the only thing that happens.
+   *
+   * Creates nothing. The next conversation comes into existence when the
+   * next message is sent, not here.
+   */
+  const resetToDraft = useCallback(() => {
+    // A reply still streaming into the view being abandoned would otherwise
+    // keep running (and keep the composer disabled) after the reset.
+    sendAbortRef.current?.abort();
+    sendAbortRef.current = null;
+
+    discardStoredAttachment(attachmentRef.current);
+    attachmentRef.current = null;
+
+    setMessages([]);
+    setInput("");
+    setAttachment(null);
+    setAttachError(null);
+    setRepoInputOpen(false);
+    setRepoUrl("");
+    setMenuOpen(false);
+    setIsResponding(false);
+    setConversationId(undefined);
+    writeStoredDraft(draftKey, "");
+    requestAnimationFrame(resizeTextarea);
+  }, [draftKey, resizeTextarea]);
+
+  // "New chat" bumps a counter in ChatSessionProvider; this is the view
+  // reacting to it. Only the draft route listens: from /chat/[id] the button
+  // navigates away, and resetting a real conversation's view on the way out
+  // would just make it flash empty first.
+  const seenResetToken = useRef(draftResetToken);
+  useEffect(() => {
+    if (!isDraftRoute) return;
+    if (seenResetToken.current === draftResetToken) return;
+    seenResetToken.current = draftResetToken;
+    resetToDraft();
+  }, [draftResetToken, isDraftRoute, resetToDraft]);
+
+  /**
+   * Adopts the conversation the server created for a draft's first message.
+   *
+   * The id is generated server-side, so this is how the client finds out
+   * about it: the URL becomes /chat/<id>, the sidebar gains a row, and the
+   * saved draft text is dropped now that it has been sent and stored.
+   *
+   * `history.replaceState` rather than a router navigation on purpose — this
+   * runs while the reply is still streaming into the view, and navigating
+   * would tear it down mid-response. It's the documented way to change the
+   * URL without one, and `usePathname` follows it.
+   */
+  function adoptCreatedConversation(response: Response, firstMessage: string) {
+    const created = response.headers.get("X-Conversation-Id");
+    if (!created || !CONVERSATION_ID_RE.test(created)) return;
+
+    setConversationId(created);
+    window.history.replaceState(null, "", `${CHAT_APP_PATH}/${created}`);
+    addConversation({ id: created, label: conversationLabel(null, firstMessage) });
+    writeStoredDraft(draftKey, "");
   }
 
   // Streams a real repo scan into the assistant bubble: progress lines while
@@ -358,6 +519,7 @@ export function ChatView({
     assistantId: string,
     repo: Extract<PendingAttachment, { kind: "repo" }>,
     userMessage: string,
+    signal: AbortSignal,
   ) {
     const steps: string[] = [];
     const showProgress = () => {
@@ -371,12 +533,17 @@ export function ChatView({
       const res = await fetch("/api/repo-scan/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal,
         body: JSON.stringify({
           repoUrl: repo.canonicalUrl,
-          conversationId,
+          // Absent on a draft — the scan request then creates the
+          // conversation, and reports the id back in a header.
+          conversationId: conversationId ?? null,
           userMessage,
         }),
       });
+
+      adoptCreatedConversation(res, userMessage);
 
       if (!res.ok || !res.body) {
         let message = "The scanner is temporarily unavailable. Please try again.";
@@ -457,7 +624,7 @@ export function ChatView({
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    const pendingAttachment = attachment;
+    const pendingAttachment = attachmentRef.current;
     if ((!trimmed && !pendingAttachment) || isResponding) return;
 
     const content = buildMessageContent(trimmed, pendingAttachment);
@@ -472,23 +639,33 @@ export function ChatView({
     // they were never persisted server-side and aren't a valid role there.
     const history = [...messages, userMessage].filter((m) => m.role !== "error");
 
+    // Lets "New chat" abandon this request if it's pressed before the reply
+    // finishes. Not stored per message: only one send is ever in flight,
+    // since the composer is disabled while `isResponding`.
+    const abortController = new AbortController();
+    sendAbortRef.current = abortController;
+
     setMessages((prev) => [
       ...prev,
       userMessage,
       { id: assistantId, role: "assistant", content: "", streaming: true },
     ]);
     setInput("");
-    setAttachment(null);
+    updateAttachment(null);
     setRepoInputOpen(false);
     setRepoUrl("");
     requestAnimationFrame(resizeTextarea);
     setIsResponding(true);
+    // The draft entry is deliberately NOT cleared here. It's cleared once the
+    // conversation actually exists (adoptCreatedConversation) — if this send
+    // fails before that, a refresh should still bring the text back.
 
     // A repo attachment runs the scan pipeline instead of a chat completion.
     if (pendingAttachment?.kind === "repo") {
       try {
-        await runRepoScan(assistantId, pendingAttachment, content);
+        await runRepoScan(assistantId, pendingAttachment, content, abortController.signal);
       } finally {
+        if (sendAbortRef.current === abortController) sendAbortRef.current = null;
         setMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
         );
@@ -501,11 +678,19 @@ export function ChatView({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
         body: JSON.stringify({
-          conversationId,
+          // Absent on a draft: this request is what creates the conversation,
+          // and the id comes back in a header.
+          conversationId: conversationId ?? null,
           messages: history.map(({ role, content }) => ({ role, content })),
         }),
       });
+
+      // Before the ok check — a failed reply still creates the conversation
+      // and saves the user's message, and the client has to know that so the
+      // next attempt continues it instead of starting another one.
+      adoptCreatedConversation(res, content);
 
       if (!res.ok || !res.body) {
         let message =
@@ -560,11 +745,15 @@ export function ChatView({
         }
       }
     } catch {
+      // An abort lands here too, but "New chat" has already cleared the
+      // message this would attach itself to, so the map below finds nothing
+      // and no stray error appears in the fresh draft.
       markAssistantError(
         assistantId,
         "Lost connection to the security advisor. Please try again.",
       );
     } finally {
+      if (sendAbortRef.current === abortController) sendAbortRef.current = null;
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
       );
@@ -582,6 +771,16 @@ export function ChatView({
       e.preventDefault();
       sendMessage(input);
     }
+  }
+
+  // Saving from the change handler rather than an effect on `input` is
+  // deliberate: an effect would also fire on the render where the restore
+  // above sets the text, and on the render where sending clears it — both of
+  // which would write over the entry with a value the user never typed.
+  function handleInputChange(value: string) {
+    setInput(value);
+    if (isDraft) writeStoredDraft(draftKey, value);
+    resizeTextarea();
   }
 
   const hasMessages = messages.length > 0;
@@ -760,10 +959,7 @@ export function ChatView({
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              resizeTextarea();
-            }}
+            onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             rows={1}
             placeholder="Message Netherite…"

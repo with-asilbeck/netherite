@@ -22,9 +22,21 @@ function SidebarToggleIcon() {
 
 export function ChatShell({
   sidebar,
+  headerRight,
   children,
 }: {
   sidebar: ReactNode;
+  /**
+   * Top-right of the chat pane — currently the upgrade CTA. Passed in as a
+   * node rather than built here so the tier stays a server-side concern:
+   * this is a client component, and anything it computed about a plan would
+   * have to be handed to the browser first.
+   *
+   * Rendered in two places, because the desktop and mobile headers are
+   * separate elements (the mobile one carries the menu button and the
+   * wordmark, and is `md:hidden`). Both are the same node.
+   */
+  headerRight?: ReactNode;
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -101,10 +113,32 @@ export function ChatShell({
               <path d="M3 12h18M3 6h18M3 18h18" />
             </svg>
           </button>
-          <span className="text-sm font-semibold tracking-tight">
+          {/* min-w-0 + truncate so the wordmark yields instead of forcing
+              the row wider than the viewport — the button beside it is
+              shrink-0, and text in a flex child defaults to min-width:auto,
+              which is how a header like this ends up scrolling sideways on
+              a 320px screen. */}
+          <span className="min-w-0 truncate text-sm font-semibold tracking-tight">
             NETHERITE
           </span>
+          {headerRight && <div className="ml-auto pl-3">{headerRight}</div>}
         </div>
+
+        {/* Desktop header. Deliberately a real row rather than a button
+            floated over the messages: the transcript scrolls the full height
+            of this pane, so an absolutely positioned control would have
+            message bubbles sliding underneath it. Borderless and only as
+            tall as its content, so it reads as part of the chat rather than
+            as a second toolbar under the sidebar's.
+
+            `pointer-events-none` on the row with it re-enabled on the child
+            keeps the empty strip from swallowing clicks meant for the
+            message area beneath it. */}
+        {headerRight && (
+          <div className="pointer-events-none hidden justify-end px-4 pt-3 md:flex">
+            <div className="pointer-events-auto">{headerRight}</div>
+          </div>
+        )}
 
         <main className="min-h-0 flex-1">{children}</main>
       </div>

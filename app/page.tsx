@@ -39,7 +39,7 @@ const steps = [
 const navLinks: { label: string; href: string | null }[] = [
   { label: "Docs", href: "/docs" },
   { label: "How it works", href: null },
-  { label: "Pricing", href: "#" },
+  { label: "Pricing", href: "/pricing" },
   { label: "Partnership", href: "#" },
 ];
 

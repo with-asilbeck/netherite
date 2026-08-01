@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { logout, createConversationAction } from "@/app/chat/actions";
+import { logout } from "@/app/chat/actions";
+import { CHAT_APP_PATH } from "@/lib/chat-entry";
 import { NewChatButton } from "@/components/new-chat-button";
 import { ConversationRow } from "@/components/conversation-row";
-
-type RecentConversation = { id: string; label: string };
+import { useChatSession } from "@/components/chat-session";
 
 const THEME_OPTIONS = [
   { value: "light", label: "Light" },
@@ -141,39 +141,29 @@ function ProfileMenu({ userEmail }: { userEmail?: string | null }) {
   );
 }
 
-export function ChatSidebar({
-  userEmail,
-  conversations: initialConversations,
-}: {
-  userEmail?: string | null;
-  conversations: RecentConversation[];
-}) {
-  const [conversations, setConversations] = useState(initialConversations);
+export function ChatSidebar({ userEmail }: { userEmail?: string | null }) {
+  // The list lives in ChatSessionProvider rather than here, because the chat
+  // view has to be able to add to it: sending the first message in a draft
+  // creates a conversation without navigating anywhere.
+  const { conversations, removeConversation, renameConversation } = useChatSession();
   const pathname = usePathname();
   const router = useRouter();
-  const [, startTransition] = useTransition();
 
   function handleDeleted(id: string) {
     const next = conversations.filter((c) => c.id !== id);
-    setConversations(next);
+    removeConversation(id);
 
     if (pathname !== `/chat/${id}`) return;
 
-    // The user was viewing the conversation they just deleted — send them
-    // to the next most recent one, or spin up a new one if none remain.
-    if (next.length > 0) {
-      router.push(`/chat/${next[0].id}`);
-    } else {
-      startTransition(async () => {
-        await createConversationAction({});
-      });
-    }
+    // The user was viewing the conversation they just deleted — send them to
+    // the next most recent one, or to an empty draft if none remain. Landing
+    // on a draft creates nothing; if they don't type anything, they're left
+    // with no conversations, which is the truth.
+    router.push(next.length > 0 ? `/chat/${next[0].id}` : CHAT_APP_PATH);
   }
 
   function handleRenamed(id: string, title: string) {
-    setConversations((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, label: title } : c)),
-    );
+    renameConversation(id, title);
   }
 
   return (
