@@ -19,18 +19,15 @@ export function UpgradeButton({ tier }: { tier: Tier }) {
   return (
     <Link
       href="/pricing"
-      // The label names the next tier rather than saying a bare "Upgrade",
-      // so the button says what it costs a click to find out.
+      // The label is the bare verb at every width, so the tier name lives in
+      // the tooltip and on the pricing page instead. That also drops the
+      // responsive two-span label this used to need to fit a 320px header.
       title={`See plans — ${TIER_LABELS[next]} and above`}
-      className="inline-flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90"
+      // `cta-glow` (app/globals.css) supplies the warm accent halo and its
+      // pulse; the pill radius keeps the edges soft under it.
+      className="cta-glow inline-flex h-8 shrink-0 items-center rounded-full bg-foreground px-4 text-[13px] font-medium text-background transition-opacity hover:opacity-90"
     >
-      {/* The full label needs ~110px, which is most of what's left on a
-          320px phone once the menu button and the wordmark have taken
-          theirs. Below `sm` it drops to the verb alone rather than risking
-          the header row overflowing — the `title` above still carries the
-          detail, and the pricing page says the rest. */}
-      <span className="sm:hidden">Upgrade</span>
-      <span className="hidden sm:inline">Upgrade to {TIER_LABELS[next]}</span>
+      Upgrade
     </Link>
   );
 }

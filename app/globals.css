@@ -152,6 +152,61 @@ a[href] {
   cursor: pointer;
 }
 
+/* Soft halo for the chat header's upgrade CTA (components/upgrade-button.tsx).
+   The glow is drawn with box-shadow rather than a blurred pseudo-element: a
+   negative-z-index child paints *above* its parent's own background, so that
+   approach would wash the blur across the button face instead of sitting
+   behind it. box-shadow also follows the pill's border-radius for free.
+
+   The color comes from --accent, so the halo stays inside the brand's warm
+   neutrals (stone brown on cream, khaki on near-black) instead of the usual
+   blue/purple SaaS glow, and re-tints itself when the theme flips. */
+.cta-glow {
+  --cta-glow: color-mix(in oklab, var(--accent) 55%, transparent);
+  --cta-glow-wide: color-mix(in oklab, var(--accent) 28%, transparent);
+  animation: cta-glow-pulse 3.6s ease-in-out infinite;
+}
+
+/* Hover/focus replaces the animation outright rather than layering onto it:
+   an animated box-shadow beats a plain declaration regardless of specificity,
+   so the brighter value only lands once the animation is switched off. */
+.cta-glow:hover,
+.cta-glow:focus-visible {
+  animation: none;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.12),
+    0 0 18px var(--cta-glow),
+    0 0 38px var(--cta-glow-wide);
+}
+
+@keyframes cta-glow-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.12),
+      0 0 10px var(--cta-glow),
+      0 0 20px var(--cta-glow-wide);
+  }
+  50% {
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.12),
+      0 0 16px var(--cta-glow),
+      0 0 32px var(--cta-glow-wide);
+  }
+}
+
+/* A pulsing element in a header that's on screen the whole session is exactly
+   what reduced-motion is asking about — keep the halo, drop the breathing. */
+@media (prefers-reduced-motion: reduce) {
+  .cta-glow {
+    animation: none;
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.12),
+      0 0 12px var(--cta-glow),
+      0 0 24px var(--cta-glow-wide);
+  }
+}
+
 @keyframes marquee {
   0% {
     transform: translateX(0);
