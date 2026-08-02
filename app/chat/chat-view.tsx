@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { MessageContent } from "@/components/message-content";
+import { CopyButton } from "@/components/copy-button";
 import { MAX_REPO_URL_LENGTH, parseGitHubRepoUrl } from "@/lib/github-repo";
 import { CONVERSATION_ID_RE, conversationLabel } from "@/lib/conversations";
 import { CHAT_APP_PATH } from "@/lib/chat-entry";
@@ -1029,9 +1030,12 @@ export function ChatView({
               {messages.map((message) => (
                 <div
                   key={message.id}
-                  className={
-                    message.role === "user" ? "flex justify-end" : "flex justify-start"
-                  }
+                  // A column so the copy button can sit under the bubble;
+                  // `items-*` keeps the same left/right placement the old
+                  // `justify-*` gave the bubble itself.
+                  className={`group flex flex-col ${
+                    message.role === "user" ? "items-end" : "items-start"
+                  }`}
                 >
                   {message.role === "user" && (
                     <div className="max-w-[88%] rounded-2xl bg-accent px-4 py-2.5 text-[15px] leading-[1.6] text-accent-foreground sm:max-w-[75%]">
@@ -1051,6 +1055,26 @@ export function ChatView({
                       )}
                     </div>
                   )}
+
+                  {/* Nothing to copy from an empty or still-streaming reply,
+                      and a button that appears mid-stream would shift the
+                      text under the pointer. Errors get none — the text is a
+                      status line, not content the user wrote or asked for.
+                      Visible by default on touch, where there is no hover to
+                      reveal it with. */}
+                  {message.role !== "error" &&
+                    Boolean(message.content) &&
+                    !message.streaming && (
+                      <CopyButton
+                        text={message.content}
+                        label={
+                          message.role === "user"
+                            ? "Copy your message"
+                            : "Copy response"
+                        }
+                        className="mt-1 opacity-100 transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                      />
+                    )}
 
                   {message.role === "error" && (
                     <div
