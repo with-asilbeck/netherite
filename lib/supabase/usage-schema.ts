@@ -10,13 +10,15 @@
  * these objects — currently 20260731000000_usage_tracking.sql and
  * 20260731010000_drop_admin_usage_summary.sql.
  *
- * The billing tables are declared in ./billing-schema.ts and mixed in
- * below. They share this type because they share one service-role client;
- * they live in their own file because they belong to a different feature
- * and a different migration.
+ * The billing tables are declared in ./billing-schema.ts and the GitHub
+ * connection table in ./github-schema.ts, both mixed in below. They share
+ * this type because they share one service-role client; they live in their
+ * own files because they belong to different features and different
+ * migrations.
  */
 
 import type { BillingTables } from "./billing-schema";
+import type { GitHubTables } from "./github-schema";
 import type { ActionType, Tier } from "@/lib/usage/tiers";
 
 export type UsageEventRow = {
@@ -51,7 +53,8 @@ export type UsageDatabase = {
         Update: Partial<UserTierRow>;
         Relationships: [];
       };
-    } & BillingTables;
+    } & BillingTables &
+      GitHubTables;
     Views: Record<never, never>;
     Functions: {
       reserve_usage: {

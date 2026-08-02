@@ -11,10 +11,14 @@ import {
   type ReactNode,
 } from "react";
 import { MessageContent } from "@/components/message-content";
+import { CopyButton } from "@/components/copy-button";
 import { MAX_REPO_URL_LENGTH, parseGitHubRepoUrl } from "@/lib/github-repo";
 import { CONVERSATION_ID_RE, conversationLabel } from "@/lib/conversations";
 import { CHAT_APP_PATH } from "@/lib/chat-entry";
 import { useChatSession } from "@/components/chat-session";
+import { createClient } from "@/lib/supabase/client";
+import { GITHUB_OAUTH_SCOPES } from "@/lib/github/scopes";
+import type { GitHubConnectionSummary } from "@/lib/supabase/github-schema";
 
 type Message = {
   id: string;
@@ -183,6 +187,16 @@ export function ChatView({
   const [menuOpen, setMenuOpen] = useState(false);
   const [repoInputOpen, setRepoInputOpen] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
+  // GitHub connection state for the repo-attach flow. `null` means "not
+  // asked yet" — distinct from a loaded summary saying `connected: false`,
+  // because the first opens the panel and the second is simply unknown.
+  const [githubConnection, setGithubConnection] =
+    useState<GitHubConnectionSummary | null>(null);
+  const [connectPanelOpen, setConnectPanelOpen] = useState(false);
+  // "reconnect" only after a stored token turned out to be dead, so the copy
+  // can say what happened instead of implying the user never connected.
+  const [connectMode, setConnectMode] = useState<"connect" | "reconnect">("connect");
+  const [isConnecting, setIsConnecting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -261,6 +275,54 @@ export function ChatView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, resizeTextarea]);
 
+  /**
+   * Reads connection status. Returns `undefined` when the request itself
+   * failed, which is deliberately not the same as a summary saying "not
+   * connected": a network blip must not be mistaken for "you never connected
+   * GitHub", so the caller falls through to the URL input and lets the
+   * server — the only real boundary — decide.
+   */
+  const loadGitHubConnection = useCallback(async (): Promise<
+    GitHubConnectionSummary | undefined
+  > => {
+    try {
+      const res = await fetch("/api/github/connection", { cache: "no-store" });
+      if (!res.ok) return undefined;
+      const summary = (await res.json()) as GitHubConnectionSummary;
+      setGithubConnection(summary);
+      return summary;
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  // Coming back from GitHub authorization.
+  //
+  // The connect flow is a full-page redirect, so "show the URL input in the
+  // same spot without reopening the menu" has to survive a navigation — the
+  // callback appends `?github=` and this picks it up on mount. The parameter
+  // is stripped immediately so a later reload doesn't reopen the input.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("github");
+    if (!status) return;
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete("github");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+
+    if (status === "connected") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- a one-shot handoff from the OAuth redirect, not a subscription: the query parameter is consumed and stripped above, so this cannot run twice
+      void loadGitHubConnection();
+      setRepoInputOpen(true);
+      requestAnimationFrame(() => repoInputRef.current?.focus());
+    } else {
+      setAttachError(
+        "GitHub authorization didn't complete, so no connection was saved. Please try again.",
+      );
+    }
+  }, [loadGitHubConnection]);
+
   useEffect(() => {
     if (!menuOpen) return;
 
@@ -303,23 +365,103 @@ export function ChatView({
   function openFilePicker() {
     setMenuOpen(false);
     setRepoInputOpen(false);
+    setConnectPanelOpen(false);
     setAttachError(null);
     fileInputRef.current?.click();
   }
 
-  function openRepoInput() {
-    setMenuOpen(false);
-    setAttachError(null);
+  function showRepoInput() {
+    setConnectPanelOpen(false);
     setRepoInputOpen(true);
     // The input mounts in the same commit this state change triggers, so
     // focus has to wait for it to exist.
     requestAnimationFrame(() => repoInputRef.current?.focus());
   }
 
+  async function openRepoInput() {
+    setMenuOpen(false);
+    setAttachError(null);
+
+    // Cached after the first look: the menu can be opened repeatedly, and
+    // this shouldn't be a round trip every time.
+    const summary = githubConnection ?? (await loadGitHubConnection());
+
+    // `undefined` is the request-failed case described above — proceed to
+    // the input rather than falsely claiming they aren't connected.
+    if (summary && !summary.connected) {
+      setConnectMode("connect");
+      setRepoInputOpen(false);
+      setConnectPanelOpen(true);
+      return;
+    }
+
+    showRepoInput();
+  }
+
   function closeRepoInput() {
     setRepoInputOpen(false);
+    setConnectPanelOpen(false);
     setRepoUrl("");
     setAttachError(null);
+  }
+
+  /**
+   * Starts the GitHub authorization round trip.
+   *
+   * Two different calls, because the account is in one of two states and
+   * only one of them can be fixed by linking:
+   *
+   * - No GitHub identity on the Supabase account (signed up with Google):
+   *   `linkIdentity` attaches one.
+   * - A GitHub identity exists but no usable token is stored — they signed
+   *   up with GitHub before this feature, or their token was dropped after
+   *   GitHub rejected it. Linking would fail ("identity already exists"), so
+   *   this re-runs sign-in, whose only purpose here is to mint a fresh
+   *   `provider_token` for the callback to capture.
+   *
+   * `next` carries the current path so the callback returns here with the
+   * repo input already open, rather than to a blank chat.
+   */
+  /**
+   * Turns a server's `action` hint into the matching recovery UI. Ignores
+   * anything else, so a rejection like "you don't have push access" — which
+   * reconnecting would not fix — doesn't get a misleading connect button.
+   */
+  function showConnectPanelFor(action: string | undefined) {
+    if (action !== "connect" && action !== "reconnect") return;
+
+    // The stored token is gone or was never there; reflect that locally so
+    // the next attach attempt doesn't reuse a stale "connected" summary.
+    setGithubConnection((prev) =>
+      prev ? { ...prev, connected: false, username: null } : prev,
+    );
+    setConnectMode(action);
+    setRepoInputOpen(false);
+    setConnectPanelOpen(true);
+  }
+
+  async function handleConnectGitHub() {
+    if (isConnecting) return;
+    setIsConnecting(true);
+    setAttachError(null);
+
+    const supabase = createClient();
+    const next = encodeURIComponent(window.location.pathname);
+    const options = {
+      redirectTo: `${window.location.origin}/auth/callback?next=${next}`,
+      scopes: GITHUB_OAUTH_SCOPES,
+    };
+
+    const { error } = githubConnection?.hasGitHubIdentity
+      ? await supabase.auth.signInWithOAuth({ provider: "github", options })
+      : await supabase.auth.linkIdentity({ provider: "github", options });
+
+    // On success the browser is already navigating to GitHub, so there is no
+    // state left to reset — only the failure path returns here.
+    if (error) {
+      setAttachError(error.message || "Couldn't start GitHub authorization. Please try again.");
+      setIsConnecting(false);
+    }
   }
 
   async function handleFileSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -408,6 +550,7 @@ export function ChatView({
         ref?: string | null;
         scanAvailable?: boolean;
         error?: string;
+        action?: string;
       } = {};
       try {
         data = await res.json();
@@ -416,6 +559,10 @@ export function ChatView({
       }
 
       if (!res.ok || !data.slug || !data.canonicalUrl) {
+        // A connection problem, as opposed to a bad URL or a repo they don't
+        // own, is recoverable right here — swap the input for the connect
+        // panel instead of leaving them with an error and nothing to press.
+        showConnectPanelFor(data.action);
         setAttachError(data.error ?? "Couldn't attach that repository. Please try again.");
         return;
       }
@@ -550,6 +697,9 @@ export function ChatView({
         try {
           const data = await res.json();
           if (typeof data?.error === "string") message = data.error;
+          // A token that died between attaching and sending lands here.
+          // Offer the reconnect panel alongside the message in the transcript.
+          showConnectPanelFor(typeof data?.action === "string" ? data.action : undefined);
         } catch {
           // Non-JSON error body — keep the generic message.
         }
@@ -843,6 +993,53 @@ export function ChatView({
         </div>
       )}
 
+      {/* Occupies the same slot as the repo URL input below, and is mutually
+          exclusive with it: until a GitHub account is connected there is no
+          point asking for a URL, because every scan would be refused at the
+          ownership check. */}
+      {connectPanelOpen && (
+        <div className="mb-2 rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-card-foreground">
+                {connectMode === "reconnect"
+                  ? "Reconnect GitHub to scan your repos"
+                  : "Connect GitHub to scan your repos"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {connectMode === "reconnect"
+                  ? "Your previous authorization expired or was revoked. Reconnecting takes a moment and restores scanning."
+                  : "Netherite scans repositories you own or have write access to. It asks GitHub for read access to your public repositories only — never write access, and never your private code."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={closeRepoInput}
+              aria-label="Dismiss the GitHub connection panel"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              ✕
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleConnectGitHub}
+            disabled={isConnecting}
+            className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 text-sm font-medium text-accent-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            {isConnecting
+              ? "Opening GitHub…"
+              : githubConnection?.hasGitHubIdentity
+                ? "Reconnect GitHub"
+                : "Connect GitHub"}
+          </button>
+        </div>
+      )}
+
       {repoInputOpen && (
         <form onSubmit={handleRepoSubmit} className="mb-2 flex items-center gap-2">
           <input
@@ -938,7 +1135,7 @@ export function ChatView({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={openRepoInput}
+                    onClick={() => void openRepoInput()}
                     className="block w-full px-3 py-2 text-left text-sm text-card-foreground transition-colors hover:bg-muted"
                   >
                     Attach GitHub repo
@@ -1029,9 +1226,12 @@ export function ChatView({
               {messages.map((message) => (
                 <div
                   key={message.id}
-                  className={
-                    message.role === "user" ? "flex justify-end" : "flex justify-start"
-                  }
+                  // A column so the copy button can sit under the bubble;
+                  // `items-*` keeps the same left/right placement the old
+                  // `justify-*` gave the bubble itself.
+                  className={`group flex flex-col ${
+                    message.role === "user" ? "items-end" : "items-start"
+                  }`}
                 >
                   {message.role === "user" && (
                     <div className="max-w-[88%] rounded-2xl bg-accent px-4 py-2.5 text-[15px] leading-[1.6] text-accent-foreground sm:max-w-[75%]">
@@ -1051,6 +1251,26 @@ export function ChatView({
                       )}
                     </div>
                   )}
+
+                  {/* Nothing to copy from an empty or still-streaming reply,
+                      and a button that appears mid-stream would shift the
+                      text under the pointer. Errors get none — the text is a
+                      status line, not content the user wrote or asked for.
+                      Visible by default on touch, where there is no hover to
+                      reveal it with. */}
+                  {message.role !== "error" &&
+                    Boolean(message.content) &&
+                    !message.streaming && (
+                      <CopyButton
+                        text={message.content}
+                        label={
+                          message.role === "user"
+                            ? "Copy your message"
+                            : "Copy response"
+                        }
+                        className="mt-1 opacity-100 transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                      />
+                    )}
 
                   {message.role === "error" && (
                     <div

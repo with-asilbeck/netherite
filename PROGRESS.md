@@ -1269,3 +1269,323 @@ delete check compared DOM row counts, but the sidebar caps at `MAX_RECENTS = 30`
 and that user had 34 conversations, so deleting one simply backfilled the list
 and the count never moved. The database check is the one that actually proves
 the behaviour.
+
+## 2026-08-02 — 401 given its own error path; key audit
+
+Repo scans were failing in ~2.2s at both stages. The cause was outside the
+code: the OpenRouter key in `.env.local` had been revoked, and every call —
+scan *and* chat — came back `401 {"error":{"message":"User not found."}}`.
+
+What made that take a full investigation is the part worth fixing. `401` was
+the one status with no branch in `requestChatCompletion`, so it fell through
+to "The scanner's model backend is unavailable right now." A revoked key fails
+every model at once in a few hundred milliseconds, which is the same shape as
+an upstream outage, so the message was actively pointing the wrong way.
+
+- **401 now has its own branch** in both `requestChatCompletion` and
+  `requestChatCompletionStream`, saying the key was rejected and that this
+  needs a new `OPENROUTER_API_KEY` rather than a retry.
+- **`OpenRouterRequestError` carries `detail`** — upstream's own text
+  alongside the message we show. `"User not found."` was being logged and then
+  dropped; both scan stages now record it as a field.
+- **`budget.authFailed`** mirrors `creditsExhausted`: after one 401 the scan
+  stops calling instead of firing ~38 more requests to collect 38 copies of
+  the same error. Every file ends `inconclusive`, so `assessOutcome` reports
+  `failed` and the report carries the "do not read this as a clean result"
+  banner. `modelCalls` stays 0, so the route hands the usage unit back.
+- **`deepScanFile`'s logging** matches triage's — explicit fields including
+  `status`, rather than handing the Error to `console.error`, which prints the
+  class and message and drops the status.
+
+**A trap worth recording:** `GET /api/v1/models` returns **200 for any key**,
+including a made-up one. Checking model ids against it and concluding the
+credentials were fine is exactly the wrong turn this cost. `GET /api/v1/key`
+is the endpoint that answers the question, and `AUTH_FAILURE_LOG` says so.
+
+**Audited, no change needed**
+
+- Only `lib/openrouter.ts:229` and `:305` read a key, both
+  `process.env.OPENROUTER_API_KEY`. No second or differently-named variable.
+  (`GEMINI_API_KEY` sits unused in `.env.local` — nothing reads it.)
+- Both calls already send `Authorization`, `HTTP-Referer`, and
+  `X-Title: "Netherite"`. They are the only two OpenRouter callers in the
+  codebase, and `git log -S '"X-Title"'` shows the scan helper was born with
+  the header in e88c094. No call is missing it; the activity log's "Unknown"
+  entry did not come from here.
+
+**Verified**
+
+- `tsc --noEmit` clean.
+- `lib/openrouter.ts` compiled standalone and driven against a deliberately
+  invalid key: all three scan models and the chat stream return
+  `status: 401`, `detail: "User not found."`, and the new message. Unsetting
+  the variable still returns the 500 config error.
+- All three configured model ids present in `GET /api/v1/models` (337 models).
+
+**Next:** the replacement key is valid (`/api/v1/key` → 200) but the account
+behind it holds almost no credit — triage 402s at `max_tokens: 500` ("can only
+afford 175"), deep at 2000 ("can only afford 29"), and `is_free_tier: true`.
+Scans stay blocked until that account is topped up. The 402 path already
+reports this correctly, so no code change is pending on it.
+
+## 2026-08-02 — Repo-scan failure traced to an empty OpenRouter balance
+
+Re-investigated from scratch after the key replacement did not fix scanning.
+This time end-to-end at runtime, not from a standalone script: a second
+`next dev` on port 3100 with the outbound request and raw upstream response
+logged from inside the server process, driven by a real authenticated POST to
+`/api/repo-scan/run` (real Supabase session, real GitHub connection, real
+clone). Instrumentation has been removed; the findings are below.
+
+**Root cause: the OpenRouter account has no credit balance.** Not the key, not
+the code.
+
+```
+GET /api/v1/credits → {"total_credits":0,"total_usage":0.19780678}
+
+POST /chat/completions  model=google/gemini-2.5-flash  → 402 Payment Required
+  "You requested up to 500 tokens, but can only afford 175.
+   ...upgrade to a paid account"   limit_source: openrouter_credits
+```
+
+**Why "chat still works" was never evidence that scanning could.** The advisor
+runs on `inclusionai/ling-3.0-flash:free`, priced by OpenRouter at
+`prompt=$0, completion=$0`. Free models need no balance. Every scan model is
+paid — `gemini-2.5-flash`, `claude-sonnet-4.6`, `claude-opus-5`. So a healthy
+chat and a dead scanner are the expected result of a zero balance, and the
+$0.20 of recorded usage is history, not headroom.
+
+**Ruled out with runtime evidence, not by reading the code**
+
+- Not a stale process or `.env` precedence. A temporary route reported the
+  *running* server's `process.env`: `first8=sk-or-v1 last4=7e2a len=73`,
+  identical to `.env.local`, in both the pre-existing dev server (pid 11796)
+  and the diagnostic one. `.env.local` is the only env file.
+- Not the request. Logged in full: correct URL, `Authorization`,
+  `HTTP-Referer: https://www.netherite.uz`, `X-Title: Netherite`, and a
+  well-formed body. Requests reach OpenRouter — Cloudflare `cf-ray` headers
+  and a `user_id` in the error body come back.
+- Not the model ids. All three present in `GET /api/v1/models`.
+
+**Fixed: the report never named the cause.** A scan blocked on billing
+produced a banner saying only that no verdict was produced for any file, with
+"ran out of credits" buried in a collapsed list at the bottom — so the
+reader's next move was to re-run the scan rather than to add credits.
+
+- `ScanBlocker` (`"credits" | "auth" | null`) is derived from the budget and
+  threaded into `assessOutcome`, which now puts the cause **first** in
+  `outcome.notes`, ahead of its effects, and names the remedy.
+- Triage's escalation reason names the cause too, so the per-file list agrees
+  with the banner instead of a bare "Triage call failed".
+
+**Verified** — `tsc --noEmit` and `eslint` clean, plus a real scan of
+`with-asilbeck/node-authentication` (12 files, 7.4s) whose report now leads
+with:
+
+> The OpenRouter account ran out of credits (HTTP 402), so the model calls in
+> this scan were rejected before any code was read. Add credits at
+> openrouter.ai/settings/credits, then run the scan again.
+
+**Next:** scanning stays blocked until credits are added — no code change can
+substitute. Once topped up, re-run the same scan; a pass that reaches the
+models will report `outcome.status: complete` instead of `failed`.
+
+## 2026-08-02 — Off OpenRouter, onto direct vendor APIs
+
+The OpenRouter account was deleted, so every model call moved to the vendor
+APIs. `lib/openrouter.ts` is gone, replaced by `lib/llm/` — `models.ts` maps
+stage → model → provider → price, `anthropic.ts` and `google.ts` are the two
+clients, and `index.ts` dispatches on the model id. Nothing upstream knows
+which vendor serves a stage, which is what lets `MODEL_TIERS` move one.
+
+**Models now**
+
+| Stage | Model | Provider |
+|---|---|---|
+| Chat advisor | `gemini-3.6-flash` | Google |
+| Scan triage (`fast`) | `gemini-3.6-flash` | Google |
+| Scan deep (`fast`) | `claude-sonnet-4-6` | Anthropic |
+| Both stages (`best`) | `claude-opus-5` | Anthropic |
+
+**Four things that would each have shipped a broken scanner**
+
+- **`gemini-2.5-flash` is dead for new keys.** Google's `GET /v1beta/models`
+  still lists it; `generateContent` answers `404 … no longer available to new
+  users`. The same shape as the `gemini-2.0-flash-001` retirement, and the
+  same lesson: a listing is not an entitlement. `gemini-3.6-flash` was picked
+  by re-running the SQL-injection probe CLAUDE.md records — correct `yes`
+  verdict in ~1s. `gemini-2.5-flash-lite` is still ruled out.
+- **`thinkingBudget: 0` does not disable thinking on Gemini 3.x.** It is a
+  hard 400 on `gemini-3.6-flash` and silently ignored on `gemini-3.5-flash`,
+  where it left a 44-token verdict taking **28.9s**. At ~38 triage calls per
+  scan that alone exceeds `SCAN_TIMEOUT_MS`. `thinkingLevel: MINIMAL` is the
+  control that works — measured 28.9s → 1.0s, `thoughtsTokenCount: 0`.
+- **Claude Opus 5 thinks by default** and `max_tokens` bounds thinking plus
+  reply together, so the Max tier's 500-token triage budget would have been
+  spent reasoning. Disabled explicitly, with the no-internal-XML-tags line
+  that is the documented mitigation for tag leakage when thinking is off.
+- **`temperature: 0` is a 400 on Opus 5.** Sampling parameters are removed on
+  that model. Dropped for Anthropic; kept for Google, which still takes it and
+  where triage genuinely wants determinism.
+
+**Cost changed shape.** OpenRouter reported what it charged; the vendors
+return token counts only, so `MODEL_PRICING` prices them and `usage_events`
+gets a derived number. An unpriced model records **null**, never zero.
+
+**Error mapping.** 401/402/404/429 still mean what they meant, so the
+`creditsExhausted` / `authFailed` short-circuits and the report banner are
+untouched — but 402 is now synthesised: Anthropic reports billing failure as a
+400 naming the credit balance, Google as a 429, and `lib/llm/errors.ts`
+translates both. Chat also gained a 404 branch, added after a live 404 on a
+retired model id read to the user as "temporarily unavailable" — advice to
+wait, for a fault waiting cannot fix.
+
+**Verified**
+
+- `tsc --noEmit` and `eslint` clean.
+- `lib/llm` compiled and run against the live APIs: triage returned a correct
+  JSON verdict in 1437ms with `{"tokensUsed":139,"costUsd":0.0004785}`; the
+  chat stream assembled 223 chars of deltas with usage and cost attached;
+  `providerFor` threw on an unregistered id as intended.
+- **Not verified: the Anthropic path.** There is no `ANTHROPIC_API_KEY` in
+  `.env.local`, so both Claude stages returned the 500 config error and were
+  never exercised against the live API.
+
+**Next**
+
+1. Add `ANTHROPIC_API_KEY` to `.env.local` and Vercel; drop
+   `OPENROUTER_API_KEY`, which nothing reads. Then re-run a real scan — the
+   deep pass has not yet made a live call.
+2. Reconsider the triage model on cost. `gemini-3.6-flash` is $1.50/$7.50 per
+   MTok — five times the input price of the retired `gemini-2.5-flash`, and
+   **dearer than `claude-haiku-4-5` at $1/$5**. Switching is one row in
+   `MODEL_PRICING` plus one id in `models.ts`, but re-run the SQL-injection
+   probe first.
+3. Image attachments in the composer are now unblocked — the advisor model
+   accepts image input, which is what the old one could not do.
+
+## 2026-08-02 — Deep scan moved to Gemini as a stopgap (TEMPORARY)
+
+The deep-review stage was failing with `missing ANTHROPIC_API_KEY` — the
+"Not verified: the Anthropic path" item from the entry above, reached by a
+real scan. There is still no Anthropic key, so **Tier 2 now runs on Gemini**
+until there is one. This entry is written to be read by whoever reverts it.
+
+**Everything here is temporary. Grep `anthropic-swap-back`** — six sites
+across `lib/llm/models.ts`, `lib/llm/index.ts` and `lib/repo-scan/deep-scan.ts`.
+
+| Stage | Was | Is now |
+|---|---|---|
+| Scan deep (`fast`) | `claude-sonnet-4-6` | `gemini-3.6-flash` |
+| Both stages (`best`) | `claude-opus-5` | `gemini-3.6-flash` |
+| Scan triage (`fast`) | `gemini-3.6-flash` | unchanged |
+| Chat advisor | `gemini-3.6-flash` | unchanged |
+
+The prompts did not change. `DEEP_SYSTEM_PROMPT`, the security-code-review
+vulnerability classes, the vuln-report-format output contract and the
+per-tier fragments are byte-identical — only the backend moved, which is
+what `lib/llm`'s stage → model → provider indirection exists for.
+
+**The requested models are not merely unavailable, they are closed.** The ask
+was `gemini-2.5-pro`, falling back to `gemini-2.5-flash`. Checked with real
+`generateContent` calls, per the rule in CLAUDE.md:
+
+```
+gemini-2.5-pro         → 429  quotaValue: 0   (…RequestsPerMinutePerProjectPerModel-FreeTier)
+gemini-pro-latest      → 429  quotaValue: 0
+gemini-3-pro-preview   → 429  quotaValue: 0
+gemini-3.1-pro-preview → 429  quotaValue: 0
+gemini-2.5-flash       → 404  no longer available to new users
+```
+
+A `limit: 0` is an entitlement answer, not congestion — no backoff reaches
+these, and a 429 that looks like a rate limit is the misleading part. The
+free tier grants Pro models nothing at all. That leaves the Flash line, of
+which `3.6` is the newest callable member.
+
+**So the step-up between the stages is reasoning depth, not model class.**
+Triage and deep review now share one model id, which would have made the two
+passes identical. Instead triage keeps `thinkingLevel: MINIMAL` and deep
+review asks for `HIGH`, threaded through as a new provider-neutral
+`ReasoningEffort` (`lib/llm/types.ts`) that only the Google client acts on —
+Anthropic decides thinking per model id in `anthropic.ts`, and nothing calls
+it today. This is a genuine difference in what the model does and a **smaller
+one than Flash → Sonnet was. Treat deep-review quality as degraded until this
+is reverted.**
+
+**`best` is currently a tier in name only.** Both its slots resolve to the
+same id the free tier triages with, so Max buyers get `fast`'s models plus
+their non-model entitlements (exploit chains, structured report, priority
+queue). The order-of-magnitude cost premium that made a Max scan expensive
+was Opus on the ~38-call triage pass; it is suspended along with the model,
+and returns the moment that line does.
+
+**A cost bug this introduced, and the fix — keep it on the way back.** Gemini
+reports thinking tokens in `usageMetadata.thoughtsTokenCount`, *outside*
+`candidatesTokenCount`; the SDK documents `totalTokenCount` as the sum of the
+two. `usageOf` counted candidates only, which was correct for as long as
+every call sent `MINIMAL` and came back with `thoughtsTokenCount: 0`, and
+became an understatement the moment the deep stage asked for `HIGH`.
+Measured on one call: 6 candidate tokens against 584 thought tokens. This is
+the failure mode `MODEL_PRICING` exists to prevent — spend quietly reported
+low — so `usageOf` now folds thoughts into the output count.
+
+`MAX_FILE_CHARS_FOR_DEEP` needed a companion for the same reason: thinking is
+billed against `maxOutputTokens`, so `THINKING_HEADROOM` (2000) is added to
+the deep budget. Without it, `high` reasoning spends the report's own ceiling
+on thinking and returns a truncated report — the same trap CLAUDE.md records
+for Opus 5's triage budget.
+
+**Verified** — `tsc --noEmit` and `eslint` clean, plus a real end-to-end scan
+of `with-asilbeck/jizzakh-qidiruvdagilar` driven through the app's own
+`scanRepository()`:
+
+```
+tier=free  models={"triage":"gemini-3.6-flash","deep":"gemini-3.6-flash"}
+11 files collected, 17 excluded → 11 triaged → 2 flagged → 2 deep-reviewed
+outcome=complete  modelCalls=5  tokensUsed=6894  costUsd=0.011979  53.3s
+```
+
+Both previously-failing files — `src/firebaseConfig.js` and
+`src/components/Section/Section.jsx` — now complete deep review instead of
+erroring on the missing key. The token/cost fix was confirmed separately:
+`tokensUsed=267` against Google's own `total=267`, where the old arithmetic
+would have reported 52; at `minimal` it is unchanged, so triage and chat
+accounting is untouched.
+
+**The scan found nothing, and that is the part worth arguing about.** Both
+flagged files came back `NO_ISSUES_FOUND`, including the Firebase config
+holding an `AIzaSy…` key. That was checked for a sentinel bug — three raw
+runs printed before `deepScanFile`'s `NO_ISSUES_FOUND` check, all three the
+model's literal output — so it is a real verdict, not swallowed text.
+
+It is also defensible: a Firebase Web API key is a public client identifier,
+shipped in every client bundle by design, and access control lives in
+Firestore rules rather than in the key. "Hardcoded secret" is arguably the
+wrong class for it. Less comfortable is the same scan clearing
+`Section.jsx`, which reads a `wanted` collection unauthenticated — whether
+that is exposure depends on rules this static pass cannot see. **No prompt
+was tuned to force a finding.** Whether a stronger reviewer would have
+written the nuanced version of this cannot be answered without an Anthropic
+key to compare against.
+
+**New blocker, replacing OpenRouter credits.** `gemini-3.6-flash` on this key
+allows **20 requests per day** (`quotaValue: 20`,
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). One 11-file scan is ~5
+calls, so roughly **four scans a day** before everything 402s — hit partway
+through this session's testing, which is why one Max-tier run shows a file
+failing on quota. Error mapping handled it correctly: Google's 429-with-quota
+was synthesised to 402 and the report named billing as the cause.
+
+**Next**
+
+1. Add `ANTHROPIC_API_KEY`, then revert via `anthropic-swap-back`: two model
+   ids, the `reasoning: "high"` argument, and `THINKING_HEADROOM`. The Claude
+   rows were deliberately left in `MODEL_PROVIDERS` and `MODEL_PRICING` so
+   the revert cannot fail on a missing provider or a null cost. **Keep the
+   `usageOf` thinking-token fix** — it is not part of the stopgap.
+2. Re-run this same scan afterwards and compare the two reports on
+   `firebaseConfig.js` directly. That comparison is the only way to separate
+   "correct verdict" from "weaker reviewer", and it is worth recording.
+3. A paid Gemini tier would lift both the 20/day cap and the Pro `limit: 0`,
+   if the deep stage is ever meant to stay on Gemini rather than move back.

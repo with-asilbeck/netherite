@@ -49,30 +49,48 @@ in their code — with a focus on AI-generated ("vibe coded") apps.
 - Verify with `npm run verify:tiers` (needs `npm run dev` running).
 
 ## LLM usage
-- All LLM calls go through OpenRouter (single API, multiple models)
-- Model for deep analysis: anthropic/claude-sonnet-4.6
-- Model for fast/surface scans: google/gemini-2.5-flash
-- Model for the Max tier's `best` model tier: anthropic/claude-opus-5, used
-  for **both** scan stages. Confirmed present in `/api/v1/models`. Note this
-  runs on the triage pass too (~38 calls per scan), so a Max scan costs
-  roughly an order of magnitude more than a `fast` one — see the margin note
-  in PROGRESS.md before widening it to another tier.
-  - Was `google/gemini-2.0-flash-001`; that id is retired and OpenRouter 404s
-    it ("No endpoints found"), which made every triaged file escalate instead
-    of being filtered. Don't set it back.
-  - Not `gemini-2.5-flash-lite`: on a trivial SQL injection probe it answered
-    verdict "no" with the reason "SQL injection vulnerability", which is
-    useless in a filter that gates the deep pass.
-- Model for the advisor chatbot: inclusionai/ling-3.0-flash:free
-  - **Text input only** — OpenRouter reports its input modalities as
-    `["text"]`. This is why image attachments aren't offered in the composer:
-    the upload backend exists but the model would never see the image. Wiring
-    image attachments up requires switching this model to one that accepts
-    image input first (both scan models above already do).
-- API key: OPENROUTER_API_KEY only — no direct Anthropic or Google API keys needed
-- Before changing any model id, confirm it exists:
-  `GET https://openrouter.ai/api/v1/models` with the OpenRouter key, and check
-  `architecture.input_modalities` if the change depends on non-text input.
+
+- Calls go **direct to each vendor** through `lib/llm` — there is no broker.
+  `lib/llm/models.ts` is the single place that maps a stage to a model, a
+  model to a provider, and a model to its price.
+- Model ids are **provider-native**. The `vendor/model` form
+  (`anthropic/claude-sonnet-4.6`) is OpenRouter routing syntax and 404s
+  against the vendor API.
+- Model for deep analysis: `claude-sonnet-4-6` (Anthropic)
+- Model for fast/surface scans: `gemini-3.6-flash` (Google)
+- Model for the Max tier's `best` model tier: `claude-opus-5` (Anthropic), used
+  for **both** scan stages. Note this runs on the triage pass too (~38 calls
+  per scan), so a Max scan costs roughly an order of magnitude more than a
+  `fast` one — see the margin note in PROGRESS.md before widening it.
+  - **Claude Opus 5 thinks by default**, and `max_tokens` caps thinking plus
+    reply together, so a 500-token triage budget would be spent reasoning and
+    return nothing. `lib/llm/anthropic.ts` disables thinking explicitly and
+    appends a no-internal-XML-tags line, which is the documented mitigation
+    for tag leakage when thinking is off.
+  - **Do not send `temperature`** to Anthropic. Sampling parameters are
+    removed on Opus 5 and a request carrying one is a 400.
+- Model for the advisor chatbot: `gemini-3.6-flash` (Google)
+  - Was `inclusionai/ling-3.0-flash:free`, which existed only on OpenRouter.
+    It is gone, and with it the "free" in the advisor's cost model — chat is
+    now billed per token like everything else.
+  - It accepts **image input**, unlike the model it replaced. The composer
+    attachment note that used to live here no longer applies: the blocker was
+    the old model's text-only modality, and it is gone.
+- **Gemini thinking is controlled by `thinkingLevel`, not `thinkingBudget`.**
+  The numeric `thinkingBudget: 0` that works on Gemini 2.x is rejected by some
+  3.x models and silently ignored by others — on `gemini-3.5-flash` it left
+  thinking fully on and turned a 44-token verdict into a 29-second call.
+  Confirm it took effect with `thoughtsTokenCount: 0` on the response.
+- API keys: `ANTHROPIC_API_KEY` and `GEMINI_API_KEY`. `OPENROUTER_API_KEY` is
+  no longer read by anything.
+- **Cost is computed, not reported.** OpenRouter returned the amount it
+  charged; the vendor APIs return token counts only, so `MODEL_PRICING` in
+  `lib/llm/models.ts` prices them. A model missing from that table records a
+  null cost, never zero — add a row when adding a model.
+- Before changing any model id, confirm it is **callable**, not merely listed.
+  `gemini-2.5-flash` appears in Google's `GET /v1beta/models` and then returns
+  `404 … no longer available to new users` from `generateContent`. Make a real
+  one-token call with the project's own key.
 
 ## Core features (build in this order)
 

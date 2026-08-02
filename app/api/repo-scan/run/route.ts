@@ -5,6 +5,7 @@ import {
 } from "@/lib/conversations";
 import { checkRepoScanRunRateLimit } from "@/lib/rate-limit";
 import { MAX_REPO_URL_LENGTH, parseGitHubRepoUrl } from "@/lib/github-repo";
+import { oversizeRefusal, verifyRepoAccess } from "@/lib/github/access";
 import {
   acquireScanSlot,
   newScanBudget,
@@ -91,6 +92,33 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
+  }
+
+  // ── Ownership verification ────────────────────────────────────────────
+  // The gate. A user may scan a repository only if GitHub says they own it
+  // or have push access to it, asked with *their* token, keyed on their
+  // session user id. Nothing here reads the request body except the repo
+  // slug, so pasting a URL for somebody else's repository just asks GitHub
+  // about that repository and gets a refusal.
+  //
+  // Placed before the usage reservation deliberately: a rejected scan must
+  // not consume a unit of the user's monthly allowance. It is after the
+  // cheap syntactic checks for the same reason in reverse — no point
+  // spending a GitHub API call on a string that isn't a repo URL.
+  const access = await verifyRepoAccess(user.id, repo);
+  if (!access.allowed) {
+    return Response.json(
+      { error: access.message, ...(access.action ? { action: access.action } : {}) },
+      { status: access.status },
+    );
+  }
+
+  // Size gate, on the size GitHub already reported above. Before the
+  // reservation for the same reason the access check is: a repo that is too
+  // large to clone must not cost the user a scan from their allowance.
+  const oversize = oversizeRefusal(access.sizeKb);
+  if (oversize) {
+    return Response.json({ error: oversize }, { status: 413 });
   }
 
   let conversationId =

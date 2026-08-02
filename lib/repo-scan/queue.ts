@@ -8,7 +8,7 @@
 //
 // A slot is worth queueing for. One scan is a clone plus up to ~50 model
 // calls across two models, and several at once on one instance contend for
-// CPU, disk, sockets, and the OpenRouter rate limit — so the practical
+// CPU, disk, sockets, and the model providers' rate limits — so the practical
 // effect of unbounded concurrency is that everybody's scan gets slower and
 // some time out. Bounding it and ordering the waiters is the whole feature.
 //

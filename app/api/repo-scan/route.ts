@@ -1,18 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
 import { checkRepoScanRateLimit } from "@/lib/rate-limit";
 import { MAX_REPO_URL_LENGTH, parseGitHubRepoUrl } from "@/lib/github-repo";
+import { oversizeRefusal, verifyRepoAccess } from "@/lib/github/access";
 
-// Repo attach endpoint — the seam for roadmap feature #2 (GitHub repo
-// scanning). Right now it validates and normalizes a pasted repo URL and
-// nothing else: no clone, no fetch, no outbound request of any kind. That's
-// deliberate, not an oversight. The URL is attacker-controlled, so anything
-// that resolved it server-side would be an SSRF sink, and cloning arbitrary
-// repos needs its own design (disk limits, timeouts, private-repo auth,
-// symlink/`.git` handling) rather than being bolted on here.
+// Repo attach endpoint. Validates and normalizes a pasted repo URL, then
+// asks GitHub whether this user may scan it — so the composer can refuse to
+// build an attachment chip for a repo the scanner would reject anyway.
 //
-// The client attaches the repo chip on a 200 from this route, so when the
-// real scanner lands it plugs in at the marked call site below and the UI
-// needs no structural change.
+// The one outbound request it makes is to api.github.com, on a path built
+// from segments parseGitHubRepoUrl has already validated against a strict
+// allow-list. The pasted URL itself is never fetched, resolved, or cloned
+// here: it is attacker-controlled, and anything that dereferenced it would
+// be an SSRF sink. Cloning happens only in POST /api/repo-scan/run, behind
+// its own DNS re-resolution check (lib/repo-scan/ssrf.ts).
+//
+// The client attaches the repo chip on a 200 from this route; the scan runs
+// at send time against /api/repo-scan/run, which re-verifies access rather
+// than trusting that this route ran.
 
 const MAX_REQUEST_BYTES = 4 * 1024;
 
@@ -70,14 +74,32 @@ export async function POST(request: Request) {
     );
   }
 
-  // This route stays validate-only: it's what the composer calls to build an
-  // attachment chip, and it has to answer instantly. The scan itself runs at
-  // send time against POST /api/repo-scan/run, which streams progress and
-  // can take minutes.
-  const scanAvailable = true;
+  // ── Ownership verification ────────────────────────────────────────────
+  // Asked here as well as at send time so the user finds out they can't scan
+  // a repo while attaching it, not after composing a message. This is a
+  // convenience copy of the check, exactly like the client's URL parsing is
+  // a convenience copy of the server's — POST /api/repo-scan/run re-runs it
+  // independently, and that one is the boundary. Removing this route's copy
+  // would cost UX; removing the other one would remove the gate.
+  const access = await verifyRepoAccess(user.id, parsed);
+  if (!access.allowed) {
+    return Response.json(
+      { error: access.message, ...(access.action ? { action: access.action } : {}) },
+      { status: access.status },
+    );
+  }
+
+  // Refuse an unscannable repo at attach time too, so the size limit is
+  // learned while pasting the URL rather than after composing a message.
+  const oversize = oversizeRefusal(access.sizeKb);
+  if (oversize) {
+    return Response.json({ error: oversize }, { status: 413 });
+  }
 
   // `scanAvailable` tells the client whether sending this attachment will
   // produce a real scan, so the composed message can be honest either way.
+  // It is true here because the ownership check above already passed — an
+  // attachment that reaches this line is one the scanner will accept.
   return Response.json({
     kind: "repo" as const,
     owner: parsed.owner,
@@ -85,6 +107,6 @@ export async function POST(request: Request) {
     ref: parsed.ref,
     slug: parsed.slug,
     canonicalUrl: parsed.canonicalUrl,
-    scanAvailable,
+    scanAvailable: true,
   });
 }

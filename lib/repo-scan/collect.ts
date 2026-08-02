@@ -13,8 +13,10 @@ export type CollectedFile = {
   relPath: string;
   bytes: number;
   text: string;
-  /** Higher is riskier — see scoreFile. */
+  /** Higher is riskier — see scoreFile. Comparable only within a tier. */
   score: number;
+  /** Sample code, tests, or docs: ranked below all real source. */
+  demoted: boolean;
   /** Priority keyword found in the path: this tier is never dropped by caps. */
   pathPriority: boolean;
   matchedKeywords: string[];
@@ -215,6 +217,22 @@ function isIncluded(name: string): boolean {
 }
 
 /**
+ * Sample code, tests, and documentation. Not excluded — a vulnerability in
+ * an example that people copy/paste is a real finding — but demoted, for a
+ * reason found by actually running the ranker: on a repo with an
+ * `examples/` tree, every one of the top-scoring files came from it, and
+ * the library's own source did not appear at all. The keywords that carry
+ * the ranking (`auth`, `user`, `api`) are exactly the words demo apps are
+ * named after, so this tier reliably outbids real source without being
+ * where real vulnerabilities live.
+ *
+ * The deep-review budget is a dozen files, so losing it to sample code is
+ * the difference between a useful scan and a useless one.
+ */
+const DEMOTED_PATH_RE =
+  /(^|\/)(examples?|samples?|demos?|docs?|website|tests?|spec|specs|__tests__|e2e|benchmarks?)\//;
+
+/**
  * Risk rank. A priority keyword in the **path** is worth far more than one in
  * the body, because path matches actually discriminate (`app/api/auth/...`)
  * while body matches barely do — the word "user" appears in most files of a
@@ -236,11 +254,27 @@ function scoreFile(relPath: string, text: string) {
   if (/(^|\/)(routes?|controllers?|handlers?|middleware)\//.test(lowerPath)) score += 3;
   if (isEnvFile(path.basename(lowerPath))) score += 8;
 
+  // Demotion is a separate tier rather than a score penalty. Scaling the
+  // score down instead was the first attempt and it compressed everything
+  // into a two-point band, leaving real source tied with demo code — which
+  // is the situation this was meant to fix. A tier gives the guarantee
+  // outright: every non-demoted file ranks above every demoted one, and the
+  // score keeps its original meaning within each tier.
   return {
     score,
-    pathPriority: pathHits.length > 0,
+    demoted: DEMOTED_PATH_RE.test(lowerPath),
+    pathPriority: pathHits.length > 0 && !DEMOTED_PATH_RE.test(lowerPath),
     matchedKeywords: [...pathHits, ...contentHits],
   };
+}
+
+/**
+ * The one ranking order, exported so the deep-review stage picks up the same
+ * tiering rather than re-sorting on `score` alone and undoing it.
+ */
+export function byRisk(a: CollectedFile, b: CollectedFile): number {
+  if (a.demoted !== b.demoted) return a.demoted ? 1 : -1;
+  return b.score - a.score || a.relPath.localeCompare(b.relPath);
 }
 
 export async function collectFiles(root: string): Promise<CollectResult> {
@@ -338,19 +372,24 @@ export async function collectFiles(root: string): Promise<CollectResult> {
     }
 
     const text = buffer.toString("utf8");
-    const { score, pathPriority, matchedKeywords } = scoreFile(candidate.relPath, text);
+    const { score, demoted, pathPriority, matchedKeywords } = scoreFile(
+      candidate.relPath,
+      text,
+    );
     files.push({
       relPath: candidate.relPath,
       bytes: candidate.bytes,
       text,
       score,
+      demoted,
       pathPriority,
       matchedKeywords,
     });
   }
 
-  // Highest risk first; stable tiebreak by path so runs are reproducible.
-  files.sort((a, b) => b.score - a.score || a.relPath.localeCompare(b.relPath));
+  // Real source first, then sample code and tests; highest risk within each
+  // tier, with a stable tiebreak by path so runs are reproducible.
+  files.sort(byRisk);
 
   // Apply caps from the low-risk end. Path-priority files are exempt, so a
   // cap can never silence the auth/admin/payment/config files.

@@ -1,13 +1,14 @@
 import {
   DEEP_EXPLOIT_ANALYSIS_INSTRUCTIONS,
-  OpenRouterRequestError,
+  LlmRequestError,
   requestChatCompletion,
   STRUCTURED_REPORT_INSTRUCTIONS,
-} from "@/lib/openrouter";
+} from "@/lib/llm";
 import type { Entitlement } from "@/lib/tier-features";
 import type { CollectedFile } from "./collect";
 import {
   addScanUsage,
+  AUTH_FAILED_NOTE,
   MAX_FILE_CHARS_FOR_DEEP,
   OUT_OF_CREDITS_NOTE,
   type ScanBudget,
@@ -22,6 +23,18 @@ export type DeepFinding = {
 
 /** Sentinel the model returns instead of a report when a file is clean. */
 const NO_ISSUES = "NO_ISSUES_FOUND";
+
+/**
+ * Extra `maxOutputTokens` to cover thinking, which Gemini bills as output and
+ * counts against the same ceiling as the reply.
+ *
+ * TODO(anthropic-swap-back): temporary, and only meaningful while the deep
+ * stage runs on Gemini at `high` reasoning — see the call site below.
+ * Measured at 300–600 thought tokens on a small file; 2000 leaves room for a
+ * 14k-character one (MAX_FILE_CHARS_FOR_DEEP) without letting a runaway
+ * thinking budget swallow the report.
+ */
+const THINKING_HEADROOM = 2000;
 
 // Mirrors .claude/skills/security-code-review (vulnerability classes and the
 // exact per-issue output format) plus .claude/skills/vuln-report-format (one
@@ -128,6 +141,10 @@ export async function deepScanFile(
   budget: ScanBudget,
   signal?: AbortSignal,
 ): Promise<DeepFinding> {
+  if (budget.authFailed) {
+    return { relPath: file.relPath, report: null, error: AUTH_FAILED_NOTE };
+  }
+
   if (budget.creditsExhausted) {
     return { relPath: file.relPath, report: null, error: OUT_OF_CREDITS_NOTE };
   }
@@ -150,6 +167,25 @@ export async function deepScanFile(
     .join("\n");
 
   try {
+    // TODO(anthropic-swap-back): TEMPORARY — using Gemini for deep-scan until
+    // the Anthropic API is connected. Swap to Claude Sonnet/Opus here once
+    // ANTHROPIC_API_KEY is added.
+    //
+    // The model id itself lives in lib/llm/models.ts (SCAN_DEEP_MODEL /
+    // SCAN_BEST_MODEL) and arrives here as entitlement.models.deep — nothing
+    // about *this* file's prompt or output contract changed, and nothing
+    // about it should. What is temporary here is the two arguments below:
+    //
+    //   reasoning: "high"  — the deep pass is currently the same Flash model
+    //     as triage, so reasoning depth is the only thing still separating
+    //     the two stages. On Claude, thinking is decided per model id in
+    //     lib/llm/anthropic.ts and this argument is ignored; drop it on the
+    //     way back.
+    //   THINKING_HEADROOM  — Gemini counts thinking tokens against
+    //     maxOutputTokens, so asking for `high` without raising the ceiling
+    //     spends the report's budget on reasoning and returns a truncated
+    //     one. Drop it with the line above; the 3500/2000 figures are the
+    //     real budgets and were sized for the report alone.
     const { content: raw, usage } = await requestChatCompletion({
       model: entitlement.models.deep,
       system: buildDeepSystemPrompt(entitlement),
@@ -157,7 +193,10 @@ export async function deepScanFile(
       // Exploit chains and the structured table both need more room than a
       // bare finding, so the ceiling moves with the features rather than
       // truncating the very output the tier was bought for.
-      maxTokens: entitlement.exploitAnalysis || entitlement.structuredReport ? 3500 : 2000,
+      maxTokens:
+        (entitlement.exploitAnalysis || entitlement.structuredReport ? 3500 : 2000) +
+        THINKING_HEADROOM,
+      reasoning: "high",
       signal,
     });
     addScanUsage(budget, usage);
@@ -169,10 +208,26 @@ export async function deepScanFile(
     return { relPath: file.relPath, report: text, error: null };
   } catch (err) {
     if (signal?.aborted) throw err;
-    if (err instanceof OpenRouterRequestError && err.status === 402) {
+    if (err instanceof LlmRequestError && err.status === 402) {
       budget.creditsExhausted = true;
     }
-    console.error("[repo-scan] deep scan failed for", file.relPath, err);
+    if (err instanceof LlmRequestError && err.status === 401) {
+      budget.authFailed = true;
+    }
+    // Explicit fields rather than the bare error object, matching triage:
+    // handing an Error to console.error prints its class and message and
+    // drops the status, which is the field that separates a dead key from a
+    // dead model from a real outage.
+    console.error(
+      "[repo-scan] deep scan failed:",
+      JSON.stringify({
+        model: entitlement.models.deep,
+        relPath: file.relPath,
+        status: err instanceof LlmRequestError ? err.status : null,
+        message: err instanceof Error ? err.message : String(err),
+        detail: err instanceof LlmRequestError ? err.detail : null,
+      }),
+    );
     return {
       relPath: file.relPath,
       report: null,

@@ -22,7 +22,7 @@ export * from "./tiers";
  *   2. If the call fails before doing any real work, `releaseUsage()` so
  *      the user isn't billed a unit for an upstream outage.
  *   3. `recordUsageCost()` when the call finishes, to attach the real token
- *      and dollar numbers reported by OpenRouter.
+ *      and dollar numbers derived in lib/llm (token counts x MODEL_PRICING).
  *
  * `userId` must always be the id from `supabase.auth.getUser()` on the
  * server. It must never come from a request body, header, query parameter,

@@ -1,4 +1,4 @@
-import { addUsage, EMPTY_USAGE, type CompletionUsage } from "@/lib/openrouter";
+import { addUsage, EMPTY_USAGE, type CompletionUsage } from "@/lib/llm";
 
 // Hard limits for the repo-scan pipeline. Every one of these exists so a
 // scan terminates with a clear message instead of hanging or running the
@@ -12,7 +12,27 @@ export const MAX_FILE_BYTES = 500 * 1024;
 export const MAX_FILES = 400;
 
 /** Total bytes of source we're willing to hold and reason about. */
-export const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Ceiling on the repository itself, checked *before* cloning.
+ *
+ * MAX_TOTAL_BYTES bounds what we keep after filtering, which is a different
+ * thing from what lands on disk: a repo can be gigabytes of media and
+ * generated output that the filter then discards, and by the time it does,
+ * the clone has already happened. Until this existed the only bound on a
+ * hostile or merely enormous repository was CLONE_TIMEOUT_MS, which is a
+ * time limit, not a disk limit — a fast fetch of a huge repo would fill the
+ * function's temp space and fail with ENOSPC halfway through.
+ *
+ * GitHub reports `size` in KB on the same `GET /repos` response the
+ * ownership check already makes, so enforcing this costs no extra API call.
+ * The figure covers full history rather than a shallow checkout, so it
+ * overestimates what `--depth 1` actually fetches — hence a ceiling set for
+ * disk safety rather than one derived from MAX_TOTAL_BYTES, which would
+ * reject ordinary repositories with long histories.
+ */
+export const MAX_REPO_SIZE_KB = 500 * 1024;
 
 /** Directory entries walked before giving up — guards against pathological trees. */
 export const MAX_WALK_ENTRIES = 50_000;
@@ -59,12 +79,20 @@ export const SCAN_TIMEOUT_MS = 240_000;
  */
 export type ScanBudget = {
   creditsExhausted: boolean;
+  /**
+   * Set when upstream rejected the API key (HTTP 401). Same reasoning as
+   * `creditsExhausted` and deliberately a separate flag rather than a shared
+   * "stop calling" boolean: the two have different causes, different fixes,
+   * and different notes in the report, and merging them would put "out of
+   * credits" in front of someone whose key was revoked.
+   */
+  authFailed: boolean;
   usage: CompletionUsage;
   modelCalls: number;
 };
 
 export function newScanBudget(): ScanBudget {
-  return { creditsExhausted: false, usage: EMPTY_USAGE, modelCalls: 0 };
+  return { creditsExhausted: false, authFailed: false, usage: EMPTY_USAGE, modelCalls: 0 };
 }
 
 /**
@@ -76,8 +104,34 @@ export function addScanUsage(budget: ScanBudget, usage: CompletionUsage) {
   budget.modelCalls += 1;
 }
 
+/**
+ * The one thing that stopped a scan dead, when something did.
+ *
+ * Both values are account-level faults rather than anything about the
+ * repository, and both make every remaining call fail identically — which is
+ * exactly why the report has to name them. Without this the banner could say
+ * only *that* no file was reviewed, and the cause sat in a collapsed details
+ * list at the bottom, so the reader's next move was to re-run the scan rather
+ * than to go add credits or replace a key.
+ */
+export type ScanBlocker = "credits" | "auth" | null;
+
+export function blockerFor(budget: ScanBudget): ScanBlocker {
+  if (budget.authFailed) return "auth";
+  if (budget.creditsExhausted) return "credits";
+  return null;
+}
+
 export const OUT_OF_CREDITS_NOTE =
-  "Skipped — the scanner ran out of OpenRouter credits earlier in this scan.";
+  "Skipped — the scanner's model provider ran out of credit or quota earlier in this scan.";
+
+/**
+ * Says "rejected", not "unavailable". The distinction is the whole point: an
+ * outage is worth retrying and a revoked key never is, and a note that blurs
+ * them sends the reader back around the same investigation.
+ */
+export const AUTH_FAILED_NOTE =
+  "Skipped — the scanner's model API key was rejected (401) earlier in this scan. Every remaining call would fail identically.";
 
 /**
  * Path/content keywords that mark a file as security-relevant. Files matching

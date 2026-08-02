@@ -3,7 +3,7 @@ import {
   MODEL_TIERS,
   STRUCTURED_REPORT_INSTRUCTIONS,
   type ScanModels,
-} from "@/lib/openrouter";
+} from "@/lib/llm";
 import { hasFeature, limitsFor, type Tier, type TierLimits } from "@/lib/tiers";
 
 // Turns a resolved tier into the concrete things the request pipeline needs:

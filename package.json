@@ -14,12 +14,15 @@
     "verify:billing:webhooks": "node scripts/billing-webhook-test.mjs",
     "verify:billing:rls": "node scripts/billing-rls-test.mjs",
     "verify:billing:enforcement": "node scripts/billing-enforcement-test.mjs",
+    "verify:github": "node scripts/github-access-test.mjs",
     "verify:tiers": "node scripts/tier-config-test.mjs && node scripts/tier-resolution-test.mjs && node scripts/tier-enforcement-test.mjs",
     "verify:tiers:config": "node scripts/tier-config-test.mjs",
     "verify:tiers:resolution": "node scripts/tier-resolution-test.mjs",
     "verify:tiers:enforcement": "node scripts/tier-enforcement-test.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@google/genai": "^2.15.0",
     "@lemonsqueezy/lemonsqueezy.js": "^4.0.0",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.8",

@@ -8,12 +8,12 @@ import {
   CHAT_ADVISOR_MODEL,
   CHAT_ADVISOR_SYSTEM_PROMPT,
   EMPTY_USAGE,
-  OpenRouterRequestError,
+  LlmRequestError,
   readChatCompletionDeltas,
   requestChatCompletionStream,
   type ChatMessage,
   type CompletionUsage,
-} from "@/lib/openrouter";
+} from "@/lib/llm";
 import { getUserEntitlement } from "@/lib/get-user-tier";
 import { GUEST_ENTITLEMENT, withFeaturePrompts } from "@/lib/tier-features";
 import { recordUsageCost, releaseUsage, reserveUsage } from "@/lib/usage";
@@ -245,7 +245,7 @@ export async function POST(request: Request) {
 
   const contextMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
   console.log(
-    "[chat] sending to OpenRouter:",
+    "[chat] sending to the advisor model:",
     JSON.stringify(contextMessages.map((m) => ({ role: m.role, length: m.content.length }))),
   );
 
@@ -259,9 +259,12 @@ export async function POST(request: Request) {
     ? { "X-Conversation-Id": createdConversationId }
     : {};
 
-  let openRouterBody: ReadableStream<Uint8Array>;
+  // Opened before the 200 below is committed, deliberately: this is the last
+  // point at which a rejected key or a rate limit can still be answered with
+  // a status code instead of an error message buried in the stream body.
+  let advisorStream: Awaited<ReturnType<typeof requestChatCompletionStream>>;
   try {
-    openRouterBody = await requestChatCompletionStream(
+    advisorStream = await requestChatCompletionStream(
       contextMessages,
       withFeaturePrompts(CHAT_ADVISOR_SYSTEM_PROMPT, entitlement),
     );
@@ -269,7 +272,7 @@ export async function POST(request: Request) {
     // Upstream refused before generating anything — an outage shouldn't
     // cost the user a message from their monthly allowance.
     if (usageEventId) await releaseUsage(usageEventId);
-    if (err instanceof OpenRouterRequestError) {
+    if (err instanceof LlmRequestError) {
       return Response.json(
         { error: err.message },
         { status: err.status, headers: createdHeaders },
@@ -286,13 +289,13 @@ export async function POST(request: Request) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let fullText = "";
-      // Filled from the final SSE message. Stays EMPTY_USAGE (nulls, not
-      // zeros) if the stream dies first — the row then reads "cost unknown"
-      // rather than falsely reading "cost nothing".
+      // Filled from the final chunk. Stays EMPTY_USAGE (nulls, not zeros) if
+      // the stream dies first — the row then reads "cost unknown" rather than
+      // falsely reading "cost nothing".
       let usage: CompletionUsage = EMPTY_USAGE;
 
       try {
-        for await (const delta of readChatCompletionDeltas(openRouterBody, (u) => {
+        for await (const delta of readChatCompletionDeltas(advisorStream, (u) => {
           usage = u;
         })) {
           fullText += delta;

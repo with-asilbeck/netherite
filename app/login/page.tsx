@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/client";
+import { GITHUB_OAUTH_SCOPES } from "@/lib/github/scopes";
 
 const ERROR_MESSAGES = new Map<string, string>([
   ["access_denied", "Sign-in was cancelled. You can try again below."],
@@ -48,6 +49,10 @@ function OAuthButtons() {
       provider,
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        // Asked for at sign-in so someone who signs up with GitHub can scan
+        // immediately, with no second authorization round trip. Google users
+        // get the same prompt later, from the composer, via linkIdentity().
+        ...(provider === "github" ? { scopes: GITHUB_OAUTH_SCOPES } : {}),
       },
     });
 

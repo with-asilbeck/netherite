@@ -1,4 +1,4 @@
-import { OpenRouterRequestError, requestChatCompletion } from "@/lib/openrouter";
+import { LlmRequestError, requestChatCompletion } from "@/lib/llm";
 import type { Entitlement } from "@/lib/tier-features";
 import type { CollectedFile } from "./collect";
 import {
@@ -150,6 +150,15 @@ export async function triageBatch(
   budget: ScanBudget,
   signal?: AbortSignal,
 ): Promise<TriageVerdict[]> {
+  if (budget.authFailed) {
+    return batch.map((file) => ({
+      relPath: file.relPath,
+      flagged: true,
+      reason: "Not triaged — the scanner's model API key was rejected; escalated rather than cleared.",
+      inconclusive: true,
+    }));
+  }
+
   if (budget.creditsExhausted) {
     return batch.map((file) => ({
       relPath: file.relPath,
@@ -186,16 +195,51 @@ export async function triageBatch(
     }));
   } catch (err) {
     if (signal?.aborted) throw err;
-    if (err instanceof OpenRouterRequestError && err.status === 402) {
+
+    // Logged as explicit fields rather than by handing the error object to
+    // console.error. The object stringifies to its class name and message,
+    // which loses the status — and the status is the whole diagnosis here:
+    // 401 is a bad key, 402 is an empty account, 404 is a dead model id, and
+    // each of those needs a completely different fix. Losing that distinction
+    // is what makes every failure look identically like "triage is broken".
+    const status = err instanceof LlmRequestError ? err.status : null;
+    if (status === 402) {
       budget.creditsExhausted = true;
     }
-    console.error("[repo-scan] triage batch failed:", err);
+    // Same short-circuit as 402, for the same reason: once the key is
+    // rejected every remaining call in this scan fails identically, and
+    // firing ~38 of them only buys 38 copies of one error.
+    if (status === 401) {
+      budget.authFailed = true;
+    }
+    console.error(
+      "[repo-scan] triage batch failed:",
+      JSON.stringify({
+        model: entitlement.models.triage,
+        status,
+        message: err instanceof Error ? err.message : String(err),
+        // Upstream's own words, which are the ones that name the cause —
+        // "User not found." on a revoked key, for instance, where `message`
+        // only carries what we chose to show.
+        detail: err instanceof LlmRequestError ? err.detail : null,
+        batchSize: batch.length,
+        files: batch.map((file) => file.relPath),
+      }),
+    );
     // Fail toward more review, not less: a triage outage must not read as
-    // "these files are clean".
+    // "these files are clean". The reason names the cause where we know it,
+    // so the per-file list agrees with the banner instead of saying only
+    // that something went wrong.
+    const reason =
+      status === 401
+        ? "Triage failed — the model API key was rejected; escalated for review."
+        : status === 402
+          ? "Triage failed — the model provider is out of credit or quota; escalated for review."
+          : "Triage call failed — escalated for review.";
     return batch.map((file) => ({
       relPath: file.relPath,
       flagged: true,
-      reason: "Triage call failed — escalated for review.",
+      reason,
       inconclusive: true,
     }));
   }
