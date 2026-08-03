@@ -1589,3 +1589,61 @@ was synthesised to 402 and the report named billing as the cause.
    "correct verdict" from "weaker reviewer", and it is worth recording.
 3. A paid Gemini tier would lift both the 20/day cap and the Pro `limit: 0`,
    if the deep stage is ever meant to stay on Gemini rather than move back.
+
+---
+
+## 2026-08-03 — Cookie Policy page at `/cookie`
+
+`app/cookie/page.tsx`, a static server component. There is no `/privacy` or
+`/terms` route to mirror, so the structure is taken from `app/pricing/page.tsx`
+— the closest existing static page with its own header and footer — minus the
+Supabase call, since nothing on this page depends on a session. Header uses the
+docs layout's "Back home" link rather than pricing's Account/Log in, which keeps
+the page fully static.
+
+Prose is hand-authored JSX, not `react-markdown`: the policy is fixed text, and
+routing it through `MessageContent` would inherit chat bubble typography. Body
+copy sits in `text-muted-foreground` with headings in `foreground`, matching the
+lead-paragraph treatment on `/docs` and `/pricing`. Sections are numbered
+`01`–`08` and separated by `border-t border-border`, following the same
+border-led rhythm used elsewhere.
+
+The cookie-category comparison is a real `<table>`, styled from the one in
+`app/usage/page.tsx`: wrapped in `overflow-x-auto rounded-xl border`, with
+`min-w-[720px]` so four columns of prose scroll inside their own container
+instead of pushing the page sideways on a phone. Category names are `<th
+scope="row">`, so the table is navigable rather than just visually gridded.
+
+**Theming needed no new code.** Every color is a semantic token, so the page
+follows next-themes through the root provider like the rest of the site. No
+toggle was added — the only theme toggle in the app lives in the chat sidebar,
+and `/pricing`, `/docs`, and `/404` all inherit silently the same way.
+
+Footer discoverability: the landing page's Legal column was a bare string array
+mapped to `href="#"`. It is now `legalLinks`, using the `href: string | null`
+convention already established by `navLinks` in the same file, rendering `Link`
+for real routes and the `#` placeholder otherwise. Privacy Policy, Terms &
+Conditions, and Security stay `null` — those pages still don't exist.
+
+**Two placeholders are deliberate and must be filled before this counts as
+published legal text.** `EFFECTIVE_DATE` and `CONTACT_EMAIL` are named
+constants at the top of the file. No support address exists anywhere in the
+repo — `.env.local` defines only `NEXT_PUBLIC_SITE_URL` — so none was invented.
+The effective date was left as a placeholder carrying the drafted date rather
+than committed, since the page shouldn't claim an effective date before it goes
+live.
+
+Verified with `tsc --noEmit` and `eslint` clean, and a dev render: `/cookie`
+returns 200 with the correct `<title>`/meta description, one `<table>` with a
+header row plus four category rows, all four browser-settings links intact, and
+`/` returns 200 with `href="/cookie"` present in the footer.
+
+**Next**
+
+1. Fill `EFFECTIVE_DATE` and `CONTACT_EMAIL`. If a support address is going to
+   be referenced by more than this page, put it in a shared constant rather
+   than inlining it here.
+2. `/privacy`, `/terms`, and `/security` are still `href="#"`. When they get
+   built, `app/cookie/page.tsx` is the template — the `Section`, `Bullets`, and
+   `ExternalLink` helpers are local to it and worth lifting into
+   `components/` at the second legal page, not before.

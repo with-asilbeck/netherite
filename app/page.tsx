@@ -40,11 +40,26 @@ const navLinks: { label: string; href: string | null }[] = [
   { label: "Docs", href: "/docs" },
   { label: "How it works", href: null },
   { label: "Pricing", href: "/pricing" },
-  { label: "Partnership", href: "#" },
 ];
 
 const navLinkClassName =
   "text-sm text-muted-foreground transition-colors hover:text-foreground";
+
+const footerLinkClassName =
+  "text-sm text-black-700 transition-colors hover:text-almond_cream-800";
+
+// `null` = the page doesn't exist yet, same convention as `navLinks` above.
+const companyLinks: { label: string; href: string | null }[] = [
+  { label: "About", href: "/about" },
+  { label: "Docs", href: "/docs" },
+  { label: "Contact", href: null },
+];
+
+const legalLinks: { label: string; href: string | null }[] = [
+  { label: "Privacy Policy", href: "/policy" },
+  { label: "Terms & Conditions", href: null },
+  { label: "Cookie Policy", href: "/cookie" },
+];
 
 const chatMessages = [
   {
@@ -79,7 +94,7 @@ export default function Home() {
       className={`${inter.variable} flex min-h-screen w-full flex-col bg-sidebar font-sans text-foreground`}
     >
       <header className="flex items-center justify-between border-b border-border px-6 py-7 sm:px-14">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-1 basis-0 items-center gap-3">
           <Image
             src="/netherite-mark.png"
             alt="Netherite"
@@ -110,7 +125,7 @@ export default function Home() {
           )}
         </nav>
 
-        <div className="flex items-center gap-6">
+        <div className="flex flex-1 basis-0 items-center justify-end gap-6">
           <Link
             href="/login"
             className="text-sm text-foreground transition-opacity hover:opacity-60"
@@ -294,14 +309,34 @@ export default function Home() {
               <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
                 Products
               </div>
+              {/* Written out rather than mapped: the two product entries lead
+                  into the app through <ChatEntryLink>, which owns the
+                  auth-aware chat destination, and Pricing is a plain route. */}
               <div className="flex flex-col gap-3">
-                {["Code scanning", "Exploit simulation", "Pricing"].map(
-                  (label) => (
-                    <a
-                      key={label}
-                      href="#"
-                      className="text-sm text-black-700 transition-colors hover:text-almond_cream-800"
-                    >
+                <ChatEntryLink className={footerLinkClassName}>
+                  Code scanning
+                </ChatEntryLink>
+                <ChatEntryLink className={footerLinkClassName}>
+                  Exploit simulation
+                </ChatEntryLink>
+                <Link href="/pricing" className={footerLinkClassName}>
+                  Pricing
+                </Link>
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
+                Company
+              </div>
+              <div className="flex flex-col gap-3">
+                {companyLinks.map(({ label, href }) =>
+                  href ? (
+                    <Link key={label} href={href} className={footerLinkClassName}>
+                      {label}
+                    </Link>
+                  ) : (
+                    <a key={label} href="#" className={footerLinkClassName}>
                       {label}
                     </a>
                   ),
@@ -311,33 +346,16 @@ export default function Home() {
 
             <div>
               <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
-                Company
-              </div>
-              <div className="flex flex-col gap-3">
-                {["About", "Docs", "Contact"].map((label) => (
-                  <a
-                    key={label}
-                    href="#"
-                    className="text-sm text-black-700 transition-colors hover:text-almond_cream-800"
-                  >
-                    {label}
-                  </a>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
                 Legal
               </div>
               <div className="flex flex-col gap-3">
-                {["Privacy Policy", "Terms & Conditions", "Security"].map(
-                  (label) => (
-                    <a
-                      key={label}
-                      href="#"
-                      className="text-sm text-black-700 transition-colors hover:text-almond_cream-800"
-                    >
+                {legalLinks.map(({ label, href }) =>
+                  href ? (
+                    <Link key={label} href={href} className={footerLinkClassName}>
+                      {label}
+                    </Link>
+                  ) : (
+                    <a key={label} href="#" className={footerLinkClassName}>
                       {label}
                     </a>
                   ),
