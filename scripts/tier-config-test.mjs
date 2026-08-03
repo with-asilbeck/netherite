@@ -15,9 +15,14 @@ import { check, checkEqual, section, summarise } from "./billing-env.mjs";
 
 register("./ts-alias-hook.mjs", import.meta.url);
 
-const { TIER_LIMITS, TIERS, hasFeature, lowestTierWith, messagesCapIsVisible } = await import(
-  "../lib/tiers.ts"
-);
+const {
+  TIER_LIMITS,
+  TIERS,
+  hasFeature,
+  lowestTierWith,
+  messagesCapIsVisible,
+  monthlySoftCapFor,
+} = await import("../lib/tiers.ts");
 const { entitlementFor, GUEST_ENTITLEMENT, withFeaturePrompts } = await import(
   "../lib/tier-features.ts"
 );
@@ -27,11 +32,12 @@ const {
   capIsVisible,
   invisibleCapMessage,
   limitFor,
+  secondsUntilReset,
   secondsUntilWindowReset,
   upgradeMessage,
 } = await import("../lib/usage/tiers.ts");
 const { SCAN_BEST_MODEL, SCAN_DEEP_MODEL, SCAN_TRIAGE_MODEL } = await import(
-  "../lib/openrouter.ts"
+  "../lib/llm/models.ts"
 );
 const queue = await import("../lib/repo-scan/queue.ts");
 
@@ -39,7 +45,8 @@ const queue = await import("../lib/repo-scan/queue.ts");
 
 const SPEC = {
   free: {
-    messages_daily_cap: 200,
+    messages_daily_cap: 50,
+    messages_monthly_soft_cap: null,
     snippets_monthly: 10,
     repo_scans_monthly: 2,
     model_tier: "fast",
@@ -48,9 +55,10 @@ const SPEC = {
     priority_queue: false,
   },
   basic: {
-    messages_daily_cap: 1000,
-    snippets_monthly: 150,
-    repo_scans_monthly: 25,
+    messages_daily_cap: 100,
+    messages_monthly_soft_cap: 700,
+    snippets_monthly: 100,
+    repo_scans_monthly: 10,
     model_tier: "fast",
     vulnerability_report: false,
     deep_exploit_analysis: false,
@@ -58,8 +66,9 @@ const SPEC = {
   },
   pro: {
     messages_daily_cap: 2000,
-    snippets_monthly: 750,
-    repo_scans_monthly: 150,
+    messages_monthly_soft_cap: null,
+    snippets_monthly: 200,
+    repo_scans_monthly: 50,
     model_tier: "fast",
     vulnerability_report: true,
     deep_exploit_analysis: true,
@@ -67,8 +76,9 @@ const SPEC = {
   },
   max: {
     messages_daily_cap: 5000,
-    snippets_monthly: 3000,
-    repo_scans_monthly: 500,
+    messages_monthly_soft_cap: null,
+    snippets_monthly: 500,
+    repo_scans_monthly: 200,
     model_tier: "best",
     vulnerability_report: true,
     deep_exploit_analysis: true,
@@ -124,16 +134,53 @@ check(
   !/limit|quota|upgrade|plan|cap\b/i.test(generic),
   generic,
 );
+// Read from the table rather than restated, so the cap can move without
+// this assertion quietly checking a number nothing enforces any more.
+const freeChatCap = SPEC.free.messages_daily_cap;
 check(
   "free's message cap message does name the number and the upgrade",
-  upgradeMessage("free", "chat", 200).includes("200") &&
-    /upgrade/i.test(upgradeMessage("free", "chat", 200)),
-  upgradeMessage("free", "chat", 200),
+  upgradeMessage("free", "chat", freeChatCap).includes(String(freeChatCap)) &&
+    /upgrade/i.test(upgradeMessage("free", "chat", freeChatCap)),
+  upgradeMessage("free", "chat", freeChatCap),
 );
 check(
   "and free's message copy points at a plan sold as unlimited",
-  /unlimited/i.test(upgradeMessage("free", "chat", 200)),
-  upgradeMessage("free", "chat", 200),
+  /unlimited/i.test(upgradeMessage("free", "chat", freeChatCap)),
+  upgradeMessage("free", "chat", freeChatCap),
+);
+
+section("3b. The monthly message ceiling");
+
+// Basic is the only tier with one today. The assertion that matters is not
+// the number but that it is invisible and ordered under the daily cap: a
+// monthly ceiling above 31x the daily one could never bind, and one that
+// rendered would contradict the "unlimited messages" the plan is sold as.
+for (const tier of TIERS) {
+  checkEqual(
+    `${tier} monthly soft cap`,
+    monthlySoftCapFor(tier),
+    SPEC[tier].messages_monthly_soft_cap,
+  );
+  const monthly = SPEC[tier].messages_monthly_soft_cap;
+  if (monthly === null) continue;
+  check(
+    `  ${tier}'s monthly ceiling can actually bind before 31 days of daily ones`,
+    monthly < SPEC[tier].messages_daily_cap * 31,
+    `${monthly} vs ${SPEC[tier].messages_daily_cap} x 31`,
+  );
+  checkEqual(`  and ${tier} never shows a message number`, capIsVisible(tier, "chat"), false);
+  check(
+    `  the refusal copy names neither ceiling on ${tier}`,
+    !invisibleCapMessage().includes(String(monthly)) &&
+      !invisibleCapMessage().includes(String(SPEC[tier].messages_daily_cap)),
+    invisibleCapMessage(),
+  );
+}
+
+checkEqual(
+  "a monthly window resets at the start of next month, keyed on the window itself",
+  secondsUntilReset("month", new Date("2026-08-31T23:00:00Z")),
+  3600,
 );
 
 section("4. Window reset arithmetic");

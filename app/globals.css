@@ -64,8 +64,55 @@
   --color-stone_brown-800: #c7baab;
   --color-stone_brown-900: #e3ddd5;
 
+  /* Landing-page palette. Its own set, separate from the semantic tokens
+     below, but it swaps with `.dark` the same way they do -- see the
+     :root/.dark blocks near the end of this file for the two sets of values.
+     Every translucent step (surfaces, hairlines, glows) is a *named token*
+     with its alpha baked in rather than a `/NN` modifier on a solid one:
+     alpha modifiers can't survive the var indirection this needs (same
+     limitation noted above --border-strong), and it means the light theme
+     can change an overlay's color, not just its opacity. */
+  --color-nether-void: var(--nether-void);
+  --color-nether-fg: var(--nether-fg);
+  --color-nether-fg-soft: var(--nether-fg-soft);
+  --color-nether-muted: var(--nether-muted);
+  --color-nether-dim: var(--nether-dim);
+  --color-nether-faint: var(--nether-faint);
+  --color-nether-glow: var(--nether-glow);
+  --color-nether-glow-soft: var(--nether-glow-soft);
+  --color-nether-violet: var(--nether-violet);
+  --color-nether-alert: var(--nether-alert);
+  /* Text that sits on top of a --nether-glow fill. Not the page background:
+     on the light theme the fill stays a deep emerald, so its label goes
+     lighter while the page goes darker. */
+  --color-nether-on-glow: var(--nether-on-glow);
+  /* Hairlines, faintest to loudest. */
+  --color-nether-line-faint: var(--nether-line-faint);
+  --color-nether-line: var(--nether-line);
+  --color-nether-line-strong: var(--nether-line-strong);
+  --color-nether-line-loud: var(--nether-line-loud);
+  /* Raised surfaces and the two stops of the glass gradient. */
+  --color-nether-surface: var(--nether-surface);
+  --color-nether-surface-hover: var(--nether-surface-hover);
+  --color-nether-glass-from: var(--nether-glass-from);
+  --color-nether-glass-to: var(--nether-glass-to);
+  --color-nether-scrim: var(--nether-scrim);
+  /* Accent tints: wash (badge fills), edge (borders), glass (card top stop). */
+  --color-nether-glow-wash: var(--nether-glow-wash);
+  --color-nether-glow-wash-strong: var(--nether-glow-wash-strong);
+  --color-nether-glow-edge: var(--nether-glow-edge);
+  --color-nether-glow-edge-strong: var(--nether-glow-edge-strong);
+  --color-nether-glow-glass: var(--nether-glow-glass);
+  --color-nether-glow-tile: var(--nether-glow-tile);
+  --color-nether-cta-from: var(--nether-cta-from);
+  --color-nether-cta-to: var(--nether-cta-to);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Landing-page faces. The variables are declared by next/font on the
+     landing wrapper itself, so these utilities only resolve inside it. */
+  --font-display: var(--font-space-grotesk);
+  --font-code: var(--font-jetbrains-mono);
 
   /* Semantic tokens (defined below, swapped between :root and .dark) --
      registered here so bg-background, text-foreground, etc. exist as
@@ -163,4 +210,189 @@ a[href] {
 
 .marquee-track {
   animation: marquee 32s linear infinite;
+}
+
+/* --- Landing page ---------------------------------------------------------
+   The landing palette. Dark is the composition as designed; light is the
+   same page on paper -- the app's warm cream (almond_cream-800) rather than
+   a cool white, so moving between `/` and `/pricing` isn't a temperature
+   jump, with the emerald deepened enough to hold contrast on it.
+
+   Light values are NOT the dark ones at a different opacity: on cream the
+   raised surfaces go lighter than the page (near-white cards) while on the
+   void they go lighter than the page too but by adding white at 2.5%. Same
+   direction, different mechanics. */
+:root {
+  --nether-void: #f7f3ef;
+  --nether-fg: #0a0908;
+  --nether-fg-soft: #393026;
+  --nether-muted: #4c4133;
+  --nether-dim: #5e503f;
+  --nether-faint: #89755b;
+  --nether-glow: oklch(0.52 0.12 165);
+  --nether-glow-soft: oklch(0.45 0.11 165);
+  --nether-on-glow: #fbf9f7;
+  --nether-violet: oklch(0.45 0.16 300);
+  --nether-alert: oklch(0.48 0.16 30);
+
+  --nether-line-faint: rgb(10 9 8 / 0.06);
+  --nether-line: rgb(10 9 8 / 0.12);
+  --nether-line-strong: rgb(10 9 8 / 0.2);
+  --nether-line-loud: rgb(10 9 8 / 0.35);
+
+  --nether-surface: rgb(255 255 255 / 0.6);
+  --nether-surface-hover: rgb(255 255 255 / 0.85);
+  --nether-glass-from: rgb(255 255 255 / 0.75);
+  --nether-glass-to: rgb(255 255 255 / 0.45);
+  --nether-scrim: rgb(247 243 239 / 0.7);
+
+  --nether-glow-wash: oklch(0.7 0.13 165 / 0.14);
+  --nether-glow-wash-strong: oklch(0.7 0.13 165 / 0.24);
+  --nether-glow-edge: oklch(0.6 0.12 165 / 0.45);
+  --nether-glow-edge-strong: oklch(0.55 0.12 165 / 0.55);
+  --nether-glow-glass: oklch(0.75 0.14 165 / 0.18);
+  /* Denser than the washes: a 38px icon has to hold its own against the
+     solid-filled shapes beside it, and a 24% tint on white does not. */
+  --nether-glow-tile: oklch(0.7 0.14 165 / 0.4);
+  --nether-cta-from: oklch(0.75 0.14 165 / 0.14);
+  --nether-cta-to: oklch(0.6 0.15 300 / 0.1);
+
+  --nether-shadow: rgb(94 80 63 / 0.18);
+  --nether-glow-shadow: oklch(0.6 0.12 165 / 0.28);
+
+  /* Channel triplets, not colors: the canvas builds `rgb(<triplet> / a)` at
+     a per-particle alpha, and reads these back through getComputedStyle. */
+  --nether-particle-rgb: 62 130 112;
+  --nether-link-rgb: 70 130 115;
+}
+
+.dark {
+  --nether-void: #08090c;
+  --nether-fg: oklch(0.95 0.005 260);
+  --nether-fg-soft: oklch(0.9 0.005 260);
+  --nether-muted: oklch(0.72 0.015 260);
+  --nether-dim: oklch(0.62 0.015 260);
+  --nether-faint: oklch(0.5 0.01 260);
+  --nether-glow: oklch(0.78 0.16 165);
+  --nether-glow-soft: oklch(0.85 0.14 165);
+  --nether-on-glow: #08090c;
+  --nether-violet: oklch(0.72 0.16 300);
+  --nether-alert: oklch(0.85 0.14 30);
+
+  --nether-line-faint: rgb(255 255 255 / 0.04);
+  --nether-line: rgb(255 255 255 / 0.08);
+  --nether-line-strong: rgb(255 255 255 / 0.16);
+  --nether-line-loud: rgb(255 255 255 / 0.3);
+
+  --nether-surface: rgb(255 255 255 / 0.025);
+  --nether-surface-hover: rgb(255 255 255 / 0.05);
+  --nether-glass-from: rgb(255 255 255 / 0.05);
+  --nether-glass-to: rgb(255 255 255 / 0.015);
+  --nether-scrim: rgb(8 9 12 / 0.55);
+
+  --nether-glow-wash: oklch(0.78 0.16 165 / 0.1);
+  --nether-glow-wash-strong: oklch(0.78 0.16 165 / 0.2);
+  --nether-glow-edge: oklch(0.78 0.16 165 / 0.4);
+  --nether-glow-edge-strong: oklch(0.78 0.16 165 / 0.5);
+  --nether-glow-glass: oklch(0.78 0.16 165 / 0.12);
+  --nether-glow-tile: oklch(0.78 0.16 165 / 0.25);
+  --nether-cta-from: oklch(0.78 0.16 165 / 0.08);
+  --nether-cta-to: oklch(0.72 0.16 300 / 0.06);
+
+  --nether-shadow: rgb(0 0 0 / 0.6);
+  --nether-glow-shadow: oklch(0.78 0.16 165 / 0.25);
+
+  --nether-particle-rgb: 150 235 210;
+  --nether-link-rgb: 140 220 200;
+}
+
+/* Everything below is scoped to `.nether-surface` (the landing wrapper) so
+   it can't leak into the themed pages that share this stylesheet. */
+
+.nether-surface ::selection {
+  background: oklch(0.7 0.13 165 / 0.25);
+  color: #0a0908;
+}
+
+.dark .nether-surface ::selection {
+  background: oklch(0.78 0.16 165 / 0.3);
+  color: #fff;
+}
+
+@keyframes nether-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 var(--nether-glow-edge-strong);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+@keyframes nether-log-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nether-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* Scroll reveal. The hidden state lives here rather than in React state so
+   the class can be toggled straight on the element from the observer, and so
+   the reduced-motion opt-out below is the same rule for every section. */
+.nether-reveal {
+  opacity: 0;
+  transform: translateY(36px);
+  transition:
+    opacity 0.9s cubic-bezier(0.16, 0.84, 0.44, 1),
+    transform 0.9s cubic-bezier(0.16, 0.84, 0.44, 1);
+}
+
+.nether-reveal.is-revealed {
+  opacity: 1;
+  transform: none;
+}
+
+.nether-pulse {
+  animation: nether-pulse 2s ease-in-out infinite;
+}
+
+.nether-log-in {
+  animation: nether-log-in 0.4s ease;
+}
+
+.nether-float {
+  animation: nether-float 6s ease-in-out infinite;
+}
+
+/* The canvas field opts out in JS (it stops the rAF loop entirely); these
+   are the CSS-only decorations. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track,
+  .nether-pulse,
+  .nether-log-in,
+  .nether-float {
+    animation: none;
+  }
+
+  .nether-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
 }

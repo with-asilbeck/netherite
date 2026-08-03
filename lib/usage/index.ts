@@ -1,10 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getUserTier } from "@/lib/get-user-tier";
+import { monthlySoftCapFor } from "@/lib/tiers";
 import {
   ACTION_WINDOWS,
   capIsVisible,
   invisibleCapMessage,
   limitFor,
+  secondsUntilReset,
   secondsUntilWindowReset,
   upgradeMessage,
   type ActionType,
@@ -52,6 +54,12 @@ export type ReserveResult =
     }
   | { ok: false; reason: "unavailable"; message: string };
 
+/** Start of the current UTC month, the window the monthly soft cap counts over. */
+function monthStart(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
 export async function reserveUsage(
   userId: string,
   action: ActionType,
@@ -67,6 +75,47 @@ export async function reserveUsage(
     limit = limitFor(tier, action);
 
     const admin = createAdminClient();
+
+    // The monthly message ceiling, where a tier has one. It is checked here
+    // rather than inside reserve_usage because that function reserves
+    // against exactly one window: a second call would insert a second row
+    // and double-count every message. Checking first is therefore a read,
+    // not a reservation, and two simultaneous requests can both pass it —
+    // which is why the field is named a *soft* cap. Being a few messages
+    // over an invisible fair-use ceiling costs nothing; a second write path
+    // through the ledger, or a migration to a two-window reserve, would cost
+    // considerably more than it protects.
+    //
+    // The daily cap below is unaffected and stays atomic.
+    const softCap = action === "chat" ? monthlySoftCapFor(tier) : null;
+    if (softCap !== null) {
+      const { count, error: countError } = await admin
+        .from("usage_events")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("action_type", "chat")
+        .gte("created_at", monthStart().toISOString());
+
+      if (countError) throw countError;
+
+      const usedThisMonth = count ?? 0;
+      if (usedThisMonth >= softCap) {
+        // Never `visible`: a monthly ceiling only exists on tiers sold as
+        // unlimited messages, so it gets the same say-nothing copy the
+        // daily one does. The retry window is the month, not the day —
+        // tomorrow would not help.
+        return {
+          ok: false,
+          reason: "limit_exceeded",
+          tier,
+          used: usedThisMonth,
+          limit: softCap,
+          message: invisibleCapMessage(),
+          visible: false,
+          retryAfterSeconds: secondsUntilReset("month"),
+        };
+      }
+    }
     const { data, error } = await admin.rpc("reserve_usage", {
       p_user_id: userId,
       p_action_type: action,

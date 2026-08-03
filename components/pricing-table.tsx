@@ -23,6 +23,14 @@ import {
 } from "@/lib/usage/tiers";
 
 /**
+ * One badge sits above three plans whose yearly discounts differ, so it
+ * quotes the smallest of them. `yearlySavingPercent` already rounds down so
+ * a claim is never overstated; taking any single plan's figure — it used to
+ * be the first one's — would overstate it for the others and undo that.
+ */
+const smallestYearlySaving = Math.min(...PLANS.map(yearlySavingPercent));
+
+/**
  * The pricing table, with the monthly/yearly toggle.
  *
  * Everything shown here is display only. Clicking a plan posts nothing but
@@ -107,7 +115,7 @@ export function PricingTable({ signedIn }: { signedIn: boolean }) {
                 {option === "monthly" ? "Monthly" : "Yearly"}
                 {option === "yearly" && (
                   <span className={`ml-2 text-xs ${active ? "opacity-80" : "opacity-70"}`}>
-                    save {yearlySavingPercent(PLANS[0])}%
+                    save {smallestYearlySaving}%
                   </span>
                 )}
               </button>

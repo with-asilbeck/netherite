@@ -1,374 +1,488 @@
 import Image from "next/image";
 import Link from "next/link";
-import { inter } from "@/lib/fonts";
-import { ScrollLink } from "@/components/scroll-link";
+import type { CSSProperties } from "react";
+
 import { ChatEntryLink } from "@/components/chat-entry-link";
+import { LiveFeed } from "@/components/landing/live-feed";
+import { ParticleField } from "@/components/landing/particle-field";
+import { Reveal } from "@/components/landing/reveal";
+import { ThemeSwitcher } from "@/components/landing/theme-switcher";
+import { PLANS, formatPrice, type PaidTier } from "@/lib/billing/plans";
+import { jetbrainsMono, spaceGrotesk } from "@/lib/fonts";
+import { FEATURE_LABELS, TIER_FEATURES, TIERS, hasFeature } from "@/lib/tiers";
+import { TIER_LIMITS, formatCount } from "@/lib/usage/tiers";
 
-const stats = [
+type IconVariant = "square" | "diamond" | "ring" | "hex";
+
+const features: { title: string; body: string; icon: IconVariant }[] = [
   {
-    value: "61%",
-    label: "of AI-generated apps ship with a critical vulnerability",
+    title: "Full-Repo Context",
+    body: "No snippets, no sampling — Netherite reads across your whole codebase, not one file at a time.",
+    icon: "square",
   },
   {
-    value: "2.3M",
-    label: "records leaked from vibe-coded apps in the past year",
+    title: "Exploit Reasoning",
+    body: "Findings come with the attack chain spelled out, not just a rule name and a line number.",
+    icon: "diamond",
   },
-  { value: "1 in 4", label: "indie SaaS launches suffer a breach in month one" },
-  { value: "$4.9M", label: "average cost of a startup data breach" },
-  { value: "80%", label: "of leaked API keys found in public repos" },
+  {
+    title: "Fixes, Not Tickets",
+    body: "Every finding ships with a concrete patch you can apply, so triage doesn't become a backlog.",
+    icon: "ring",
+  },
+  {
+    title: "Rescan On Demand",
+    body: "Re-run a scan after any commit and see what moved — drift is caught in minutes, not sprints.",
+    icon: "hex",
+  },
+  {
+    title: "Built For Vibe-Coded Apps",
+    body: "Tuned for the failure modes AI-generated code actually ships: missing authz, leaked keys, raw SQL.",
+    icon: "square",
+  },
+  {
+    title: "An Advisor That Answers",
+    body: "Ask about an endpoint, paste a snippet, or query an open finding — in plain language.",
+    icon: "diamond",
+  },
 ];
 
-const steps = [
-  {
-    number: "01",
-    title: "Connect your repo",
-    body: "NETHERITE ingests your codebase and maps every entry point, dependency, and data flow.",
-  },
-  {
-    number: "02",
-    title: "AI probes for weaknesses",
-    body: "It reasons like an attacker — chaining flaws the way a real penetration tester would.",
-  },
-  {
-    number: "03",
-    title: "Get a clear report",
-    body: "Every finding comes with proof of exploit and a concrete fix — no noise, no false positives.",
-  },
-];
-
-const navLinks: { label: string; href: string | null }[] = [
-  { label: "Docs", href: "/docs" },
-  { label: "How it works", href: null },
+const navLinks = [
+  { label: "Product", href: "#features" },
   { label: "Pricing", href: "/pricing" },
-];
-
-const navLinkClassName =
-  "text-sm text-muted-foreground transition-colors hover:text-foreground";
-
-const footerLinkClassName =
-  "text-sm text-black-700 transition-colors hover:text-almond_cream-800";
-
-// `null` = the page doesn't exist yet, same convention as `navLinks` above.
-const companyLinks: { label: string; href: string | null }[] = [
-  { label: "About", href: "/about" },
   { label: "Docs", href: "/docs" },
-  { label: "Contact", href: null },
 ];
 
-const legalLinks: { label: string; href: string | null }[] = [
-  { label: "Privacy Policy", href: "/policy" },
-  { label: "Terms & Conditions", href: null },
-  { label: "Cookie Policy", href: "/cookie" },
-];
-
-const chatMessages = [
+const footerColumns: {
+  heading: string;
+  links: { label: string; href: string }[];
+}[] = [
   {
-    from: "user" as const,
-    text: "Is our /api/user/:id endpoint exposed to IDOR?",
+    heading: "PRODUCT",
+    links: [
+      { label: "Features", href: "#features" },
+      { label: "Pricing", href: "/pricing" },
+    ],
   },
   {
-    from: "assistant" as const,
-    text: (
-      <>
-        Yes — it doesn&apos;t verify the requester owns{" "}
-        <code className="font-mono">:id</code>. Any authenticated user can
-        read another account&apos;s profile. Add an ownership check before
-        the query. I can generate the patch.
-      </>
-    ),
+    heading: "COMPANY",
+    links: [
+      { label: "About", href: "/about" },
+      { label: "Log in", href: "/login" },
+    ],
   },
-  { from: "user" as const, text: "Yes, generate it." },
+  {
+    heading: "RESOURCES",
+    links: [
+      { label: "Docs", href: "/docs" },
+      { label: "Getting started", href: "/docs/getting-started" },
+    ],
+  },
+  {
+    heading: "LEGAL",
+    links: [
+      { label: "Privacy Policy", href: "/policy" },
+      { label: "Cookie Policy", href: "/cookie" },
+    ],
+  },
 ];
 
-function StatItem({ value, label }: { value: string; label: string }) {
+/**
+ * The cap lines a plan buys, read from the same table the API enforces, so
+ * the landing page cannot advertise a number the scanner won't honour.
+ */
+function capLines(tier: (typeof TIERS)[number]): string[] {
+  return [
+    `${formatCount(TIER_LIMITS[tier].repo_scan)} repository scans / month`,
+    `${formatCount(TIER_LIMITS[tier].snippet)} snippet analyses / month`,
+  ];
+}
+
+/** Gated capabilities this tier adds over the one below it. */
+function newCapabilities(tier: PaidTier): string[] {
+  const previous = TIERS[TIERS.indexOf(tier) - 1];
+  return TIER_FEATURES.filter(
+    (feature) => hasFeature(tier, feature) && !hasFeature(previous, feature),
+  ).map((feature) => FEATURE_LABELS[feature]);
+}
+
+type PricingCard = {
+  name: string;
+  price: string;
+  period: string;
+  tagline: string;
+  highlights: string[];
+  cta: string;
+  /** `null` routes through <ChatEntryLink>, which owns the auth-aware entry. */
+  href: string | null;
+  highlight: boolean;
+};
+
+// Four cards, driven by the real catalogue rather than by copy: the prices
+// are the display strings billing already checks against the live Lemon
+// Squeezy variants, and the bullets come out of lib/tiers.ts.
+const pricingCards: PricingCard[] = [
+  {
+    name: "Free",
+    price: "$0",
+    period: "",
+    tagline: "For a first look at what's hiding in your repo.",
+    highlights: [
+      ...capLines("free"),
+      `${formatCount(TIER_LIMITS.free.chat)} advisor messages / day`,
+    ],
+    cta: "Start free",
+    href: null,
+    highlight: false,
+  },
+  ...PLANS.map(
+    (plan): PricingCard => ({
+      name: plan.name,
+      price: formatPrice(plan.price.monthly),
+      period: "/ mo",
+      tagline: plan.tagline,
+      highlights: [
+        ...capLines(plan.tier),
+        ...newCapabilities(plan.tier),
+        ...plan.features,
+      ].slice(0, 4),
+      cta: `Choose ${plan.name}`,
+      href: "/pricing",
+      highlight: plan.highlight === true,
+    }),
+  ),
+];
+
+function FeatureIcon({ variant }: { variant: IconVariant }) {
+  const shapes: Record<IconVariant, CSSProperties> = {
+    square: {
+      borderRadius: 8,
+      background: "var(--nether-glow-tile)",
+      border: "1px solid var(--nether-glow-edge-strong)",
+    },
+    diamond: {
+      background:
+        "linear-gradient(135deg, var(--nether-glow), var(--nether-violet))",
+      clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
+    },
+    ring: {
+      borderRadius: "50%",
+      border: "2px solid var(--nether-glow)",
+    },
+    hex: {
+      background:
+        "linear-gradient(135deg, var(--nether-violet), var(--nether-glow))",
+      clipPath:
+        "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)",
+    },
+  };
+
   return (
-    <span className="whitespace-nowrap text-[15px] text-muted-foreground">
-      <b className="text-foreground">{value}</b> {label}
-    </span>
+    <div aria-hidden="true" className="h-[38px] w-[38px]" style={shapes[variant]} />
+  );
+}
+
+function Wordmark({ size }: { size: number }) {
+  return (
+    <Image
+      src="/netherite-mark.png"
+      alt="Netherite"
+      width={size}
+      height={size}
+      /* The mark is dark artwork on transparent: it stands on its own over
+         the light theme's cream, and is inverted to white for the dark one. */
+      className="object-contain dark:invert"
+      style={{ width: size, height: size }}
+    />
   );
 }
 
 export default function Home() {
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col bg-sidebar font-sans text-foreground`}
+      className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} nether-surface relative min-h-screen w-full overflow-x-hidden bg-nether-void font-display text-nether-fg`}
     >
-      <header className="flex items-center justify-between border-b border-border px-6 py-7 sm:px-14">
-        <div className="flex flex-1 basis-0 items-center gap-3">
-          <Image
-            src="/netherite-mark.png"
-            alt="Netherite"
-            width={34}
-            height={34}
-            className="h-[34px] w-[34px] object-contain dark:invert"
-          />
-          <span className="text-lg font-semibold tracking-tight">
+      <ParticleField />
+
+      {/* Three tracks: the outer two share the leftover width equally
+          (flex-1 basis-0), which is what keeps the section links centred on
+          the viewport rather than on the gap between the two end blocks. */}
+      <nav className="sticky top-0 z-50 flex items-center gap-4 border-b border-nether-line bg-nether-scrim px-6 py-4 backdrop-blur-xl sm:px-12">
+        <div className="flex flex-1 basis-0 items-center gap-2.5">
+          <Wordmark size={34} />
+          <span className="font-code text-[15px] font-semibold tracking-[0.12em]">
             NETHERITE
           </span>
         </div>
 
-        <nav className="hidden items-center gap-8 md:flex">
-          {navLinks.map(({ label, href }) =>
-            href ? (
-              <Link key={label} href={href} className={navLinkClassName}>
-                {label}
-              </Link>
-            ) : (
-              <ScrollLink
-                key={label}
-                targetId="how-it-works"
-                className={navLinkClassName}
-              >
-                {label}
-              </ScrollLink>
-            ),
-          )}
-        </nav>
+        <div className="hidden items-center gap-6 font-code text-[13px] text-nether-muted md:flex lg:gap-9">
+          {navLinks.map(({ label, href }) => (
+            <Link
+              key={label}
+              href={href}
+              className="transition-colors hover:text-nether-fg"
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
 
-        <div className="flex flex-1 basis-0 items-center justify-end gap-6">
+        <div className="flex flex-1 basis-0 items-center justify-end gap-4 font-code text-[13px] text-nether-muted lg:gap-6">
+          {/* Hidden on the narrowest screens, where the row is already just
+              wordmark + CTA. Nothing is lost there: with no choice stored,
+              the page follows the device's own light/dark setting. */}
+          <div className="hidden sm:block">
+            <ThemeSwitcher />
+          </div>
           <Link
             href="/login"
-            className="text-sm text-foreground transition-opacity hover:opacity-60"
+            className="hidden transition-colors hover:text-nether-fg md:block"
           >
             Log in
           </Link>
-          <ChatEntryLink className="rounded-[10px] bg-accent px-[18px] py-[9px] text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90">
+          <ChatEntryLink className="rounded-lg border border-nether-glow-edge bg-nether-glow-wash px-[18px] py-2.5 whitespace-nowrap text-nether-glow-soft transition-colors hover:bg-nether-glow-wash-strong">
             Try Netherite
           </ChatEntryLink>
         </div>
-      </header>
+      </nav>
 
-      <main className="flex flex-1 flex-wrap items-center gap-10 px-6 py-14 sm:gap-16 sm:px-14 sm:py-20">
-        <div className="min-w-0 flex-1 basis-80 text-left">
-          <div className="mb-6 text-sm font-medium text-muted-foreground">
-            AI Penetration Tester
+      <section
+        id="hero"
+        className="relative z-[2] mx-auto flex max-w-[1200px] flex-col items-center px-6 pt-24 pb-28 text-center sm:px-12 sm:pt-[120px] sm:pb-[140px]"
+      >
+        <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-nether-line bg-nether-surface px-4 py-1.5 font-code text-xs tracking-[0.1em] whitespace-nowrap text-nether-glow">
+          <span className="nether-pulse h-1.5 w-1.5 rounded-full bg-nether-glow" />
+          AI SECURITY SPECIALIST
+        </div>
+
+        <h1 className="max-w-[880px] text-[clamp(42px,8vw,76px)] leading-[1.03] font-bold tracking-[-0.03em]">
+          Break in
+          <br />
+          before they do.
+        </h1>
+
+        <p className="mt-7 max-w-[560px] text-[17px] leading-[1.6] text-nether-dim sm:text-[19px]">
+          Netherite reads your codebase like an attacker, shows you how each
+          flaw would actually be exploited, and hands you the fix.
+        </p>
+
+        <div className="mt-10 flex flex-wrap justify-center gap-4">
+          <ChatEntryLink className="rounded-[10px] bg-nether-glow px-7 py-3.5 text-[15px] font-semibold text-nether-on-glow transition-opacity hover:opacity-90">
+            Try Netherite
+          </ChatEntryLink>
+          <Link
+            href="/docs"
+            className="rounded-[10px] border border-nether-line-strong px-7 py-3.5 text-[15px] font-medium text-nether-fg-soft transition-colors hover:border-nether-line-loud"
+          >
+            View the docs
+          </Link>
+        </div>
+      </section>
+
+      <Reveal
+        id="features"
+        className="relative z-[2] mx-auto max-w-[1200px] scroll-mt-24 px-6 pt-8 pb-28 sm:px-12 sm:pb-[140px]"
+      >
+        <div className="mb-12 text-center sm:mb-16">
+          <div className="mb-3.5 font-code text-xs tracking-[0.15em] text-nether-violet">
+            CAPABILITIES
           </div>
+          <h2 className="text-[clamp(30px,5vw,42px)] font-semibold tracking-[-0.02em]">
+            Built to think like an attacker.
+          </h2>
+        </div>
 
-          <h1 className="m-0 text-[clamp(40px,5.5vw,72px)] font-semibold leading-[1.05] tracking-[-0.03em]">
-            Find the exploit before it finds you.
-          </h1>
+        <div className="grid grid-cols-1 gap-[22px] sm:grid-cols-2 lg:grid-cols-3">
+          {features.map((feature) => (
+            <div
+              key={feature.title}
+              className="rounded-[18px] border border-nether-line bg-nether-surface px-6.5 py-7.5 backdrop-blur-md transition-colors hover:border-nether-line-strong hover:bg-nether-surface-hover"
+            >
+              <FeatureIcon variant={feature.icon} />
+              <h3 className="mt-5 mb-2 text-[17px] font-semibold">
+                {feature.title}
+              </h3>
+              <p className="text-sm leading-[1.6] text-nether-dim">
+                {feature.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Reveal>
 
-          <p className="mt-6 max-w-[520px] text-[17px] leading-[1.6] text-muted-foreground sm:mt-7 sm:text-[19px]">
-            NETHERITE is an AI security specialist that scans your codebase,
-            finds vulnerabilities, and shows you exactly how they&apos;d be
-            exploited.
+      <Reveal
+        id="live"
+        className="relative z-[2] mx-auto grid max-w-[1200px] grid-cols-1 items-center gap-12 px-6 pb-28 sm:px-12 sm:pb-[140px] lg:grid-cols-[1fr_1.3fr] lg:gap-14"
+      >
+        <div>
+          <div className="mb-3.5 font-code text-xs tracking-[0.15em] text-nether-glow">
+            LIVE DETECTION
+          </div>
+          <h2 className="mb-5 text-[clamp(28px,4.5vw,38px)] font-semibold tracking-[-0.02em]">
+            Watch it hunt.
+          </h2>
+          <p className="mb-9 max-w-[420px] text-[15.5px] leading-[1.7] text-nether-dim">
+            A simulated feed from Netherite&apos;s detection engine — every
+            finding is triaged, ranked by exploitability, and routed straight to
+            a fix.
           </p>
-
-          <div className="mt-9 flex flex-wrap items-center gap-4 sm:mt-11 sm:gap-6">
-            <ChatEntryLink className="rounded-xl bg-accent px-7 py-[14px] text-base font-medium text-accent-foreground transition-opacity hover:opacity-90">
-              Try Netherite
-            </ChatEntryLink>
+          <div className="flex flex-wrap gap-9">
+            <div>
+              <div className="font-code text-[28px] font-semibold text-nether-fg-soft">
+                {formatCount(TIER_LIMITS.max.repo_scan)}
+              </div>
+              <div className="mt-1 text-[12.5px] text-nether-faint">
+                repository scans a month on Max
+              </div>
+            </div>
+            <div>
+              <div className="font-code text-[28px] font-semibold text-nether-fg-soft">
+                {formatCount(TIER_LIMITS.max.snippet)}
+              </div>
+              <div className="mt-1 text-[12.5px] text-nether-faint">
+                snippet analyses a month on Max
+              </div>
+            </div>
           </div>
         </div>
 
-        <div
-          className="flex min-w-0 flex-1 basis-80 items-center justify-center rounded-2xl border border-border"
-          style={{
-            aspectRatio: "16/10",
-            background:
-              "repeating-linear-gradient(135deg, var(--muted), var(--muted) 10px, var(--border) 10px, var(--border) 20px)",
-          }}
-        >
-          <span className="font-mono text-[13px] tracking-wide text-muted-foreground">
-            product demo video
-          </span>
-        </div>
-      </main>
+        <LiveFeed />
+      </Reveal>
 
-      <div className="overflow-hidden border-y border-border py-7">
-        <div className="marquee-track flex w-max gap-16">
-          {[0, 1].map((copy) => (
-            <div key={copy} className="flex shrink-0 gap-16">
-              {stats.map((stat) => (
-                <StatItem key={`${copy}-${stat.value}`} {...stat} />
+      <Reveal
+        id="pricing"
+        className="relative z-[2] mx-auto max-w-[1200px] scroll-mt-24 px-6 pb-28 sm:px-12 sm:pb-[140px]"
+      >
+        <div className="mb-12 text-center sm:mb-16">
+          <div className="mb-3.5 font-code text-xs tracking-[0.15em] text-nether-glow">
+            PRICING
+          </div>
+          <h2 className="text-[clamp(30px,5vw,42px)] font-semibold tracking-[-0.02em]">
+            Start free. Scale when ready.
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 items-stretch gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          {pricingCards.map((card) => (
+            <div
+              key={card.name}
+              className={`flex flex-col rounded-[20px] border px-7 py-9 backdrop-blur-lg ${
+                card.highlight
+                  ? "border-nether-glow-edge-strong bg-linear-160 from-nether-glow-glass to-nether-glass-to shadow-[0_30px_60px_-20px_var(--nether-glow-shadow)] xl:-translate-y-2"
+                  : "border-nether-line bg-linear-160 from-nether-glass-from to-nether-glass-to"
+              }`}
+            >
+              {card.highlight && (
+                <div className="mb-4.5 inline-block self-start rounded-full bg-nether-glow-wash-strong px-3 py-1.5 font-code text-[11px] tracking-[0.08em] text-nether-glow-soft">
+                  MOST POPULAR
+                </div>
+              )}
+
+              <h3 className="mb-2 text-xl font-semibold">{card.name}</h3>
+
+              <div className="mb-3.5 flex items-baseline gap-1.5">
+                <span className="text-4xl font-bold tabular-nums">
+                  {card.price}
+                </span>
+                <span className="text-[13px] text-nether-faint">
+                  {card.period}
+                </span>
+              </div>
+
+              <p className="mb-6 text-[13.5px] leading-[1.6] text-nether-dim">
+                {card.tagline}
+              </p>
+
+              <div className="mb-7 flex flex-col gap-3">
+                {card.highlights.map((highlight) => (
+                  <div
+                    key={highlight}
+                    className="flex items-baseline gap-2.5 text-[13.5px] text-nether-muted"
+                  >
+                    <span aria-hidden="true" className="text-nether-glow">
+                      →
+                    </span>
+                    {highlight}
+                  </div>
+                ))}
+              </div>
+
+              {card.href ? (
+                <Link
+                  href={card.href}
+                  className={ctaClassName(card.highlight)}
+                >
+                  {card.cta}
+                </Link>
+              ) : (
+                <ChatEntryLink className={ctaClassName(card.highlight)}>
+                  {card.cta}
+                </ChatEntryLink>
+              )}
+            </div>
+          ))}
+        </div>
+      </Reveal>
+
+      <section
+        id="access"
+        className="relative z-[2] mx-auto max-w-[1200px] px-6 pb-24 sm:px-12"
+      >
+        <div className="nether-float rounded-[28px] border border-nether-line bg-linear-135 from-nether-cta-from to-nether-cta-to px-6 py-14 text-center backdrop-blur-2xl sm:px-12 sm:py-[72px]">
+          <h2 className="mb-4 text-[clamp(28px,4.5vw,38px)] font-semibold tracking-[-0.02em]">
+            Ready to see what&apos;s hiding in your repo?
+          </h2>
+          <p className="mb-8 text-[15.5px] text-nether-dim">
+            Point Netherite at a repository and read the first findings in
+            minutes — no card required.
+          </p>
+          <ChatEntryLink className="inline-block rounded-[10px] bg-nether-glow px-8 py-4 text-[15px] font-semibold whitespace-nowrap text-nether-on-glow transition-opacity hover:opacity-90">
+            Try Netherite
+          </ChatEntryLink>
+        </div>
+      </section>
+
+      <footer className="relative z-[2] mx-auto flex max-w-[1200px] flex-wrap items-start justify-between gap-10 border-t border-nether-line px-6 py-12 sm:px-12">
+        <div>
+          <div className="mb-3 flex items-center gap-2.5">
+            <Wordmark size={28} />
+            <span className="font-code text-[13px] font-semibold tracking-[0.1em]">
+              NETHERITE
+            </span>
+          </div>
+          <div className="flex items-center gap-2 font-code text-xs text-nether-faint">
+            <span className="nether-pulse h-1.5 w-1.5 rounded-full bg-nether-glow" />
+            all systems nominal · © 2026 Netherite
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-10 text-[13.5px] sm:gap-16">
+          {footerColumns.map((column) => (
+            <div key={column.heading} className="flex flex-col gap-2.5">
+              <span className="mb-1 text-[11.5px] tracking-[0.1em] text-nether-faint">
+                {column.heading}
+              </span>
+              {column.links.map(({ label, href }) => (
+                <Link
+                  key={label}
+                  href={href}
+                  className="text-nether-dim transition-colors hover:text-nether-glow"
+                >
+                  {label}
+                </Link>
               ))}
             </div>
           ))}
         </div>
-      </div>
-
-      <section
-        id="how-it-works"
-        className="flex min-h-screen items-center border-t border-border px-6 py-14 sm:px-14"
-      >
-        <div className="mx-auto w-full max-w-[1100px]">
-          <div className="mb-[72px] text-center">
-            <div className="mb-4 text-sm font-medium text-muted-foreground">
-              How it works
-            </div>
-            <h2 className="m-0 text-[clamp(30px,4vw,44px)] font-semibold tracking-[-0.02em]">
-              Three steps to a hardened codebase
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 gap-12 sm:grid-cols-3">
-            {steps.map((step) => (
-              <div key={step.number}>
-                <div className="mb-4 text-sm font-medium text-muted-foreground">
-                  {step.number}
-                </div>
-                <h3 className="mb-3 text-xl font-semibold tracking-[-0.01em]">
-                  {step.title}
-                </h3>
-                <p className="text-base leading-[1.6] text-muted-foreground">
-                  {step.body}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="flex min-h-screen items-center border-t border-border bg-muted px-6 py-14 sm:px-14">
-        <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center gap-10 sm:gap-16">
-          <div className="min-w-0 flex-1 basis-[380px] text-left">
-            <div className="mb-4 text-sm font-medium text-muted-foreground">
-              Ask Netherite
-            </div>
-            <h2 className="m-0 mb-5 text-[clamp(30px,4vw,44px)] font-semibold tracking-[-0.02em]">
-              Talk to your security specialist directly.
-            </h2>
-            <p className="m-0 max-w-[460px] text-[17px] leading-[1.6] text-muted-foreground">
-              Ask about a specific endpoint, paste a snippet, or query an
-              open finding — NETHERITE&apos;s chat explains the risk in
-              plain language and suggests the fix.
-            </p>
-          </div>
-
-          {/* The whole preview is the affordance, not decoration: it routes
-              through the same entry point as the "Try Netherite" buttons. */}
-          <ChatEntryLink
-            aria-label="Open the Netherite chat advisor"
-            className="group block min-w-0 flex-1 basis-[380px] overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_40px_rgb(0_0_0/0.06)] transition duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-1 hover:border-border-strong hover:shadow-[0_28px_56px_rgb(0_0_0/0.10)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent active:translate-y-0 active:scale-[0.995] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100"
-          >
-            <div className="flex items-center gap-2 border-b border-border px-[18px] py-[14px]">
-              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
-              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
-              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
-              <span className="ml-2 font-mono text-[13px] text-muted-foreground">
-                netherite-chat
-              </span>
-            </div>
-
-            <div className="flex flex-col gap-4 p-6">
-              {chatMessages.map((message, i) =>
-                message.from === "user" ? (
-                  <div
-                    key={i}
-                    className="max-w-[80%] self-end rounded-tl-[14px] rounded-tr-[14px] rounded-br-[2px] rounded-bl-[14px] bg-accent px-4 py-3 text-sm leading-[1.5] text-accent-foreground"
-                  >
-                    {message.text}
-                  </div>
-                ) : (
-                  <div
-                    key={i}
-                    className="max-w-[85%] self-start rounded-tl-[14px] rounded-tr-[14px] rounded-br-[14px] rounded-bl-[2px] bg-muted px-4 py-3 text-sm leading-[1.5] text-foreground"
-                  >
-                    {message.text}
-                  </div>
-                ),
-              )}
-            </div>
-
-            <div className="flex gap-[10px] px-6 pb-6 pt-4">
-              <div className="flex-1 rounded-[10px] border border-border px-[14px] py-[11px] text-sm text-muted-foreground transition-colors duration-300 group-hover:border-border-strong">
-                Ask about your codebase…
-              </div>
-              <div className="h-10 w-10 shrink-0 rounded-[10px] bg-accent" />
-            </div>
-          </ChatEntryLink>
-        </div>
-      </section>
-
-      {/* This footer is intentionally a fixed dark brand block, not theme-
-          reactive like the rest of the page — same idea as the existing
-          cream-body / dark-footer contrast, now drawn from the palette. */}
-      <footer className="bg-black-500 px-6 pb-8 pt-[72px] text-black-800 sm:px-14">
-        <div className="mx-auto max-w-[1100px]">
-          <div className="grid grid-cols-1 gap-10 sm:grid-cols-[1.4fr_1fr_1fr_1fr]">
-            <div>
-              <div className="mb-4 flex items-center gap-[10px]">
-                <Image
-                  src="/netherite-mark.png"
-                  alt="Netherite"
-                  width={26}
-                  height={26}
-                  className="h-[26px] w-[26px] object-contain invert"
-                />
-                <span className="text-base font-semibold tracking-tight text-almond_cream-900">
-                  NETHERITE
-                </span>
-              </div>
-              <p className="m-0 max-w-[260px] text-sm leading-[1.6] text-black-700">
-                AI security specialist that finds exploits before attackers
-                do.
-              </p>
-            </div>
-
-            <div>
-              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
-                Products
-              </div>
-              {/* Written out rather than mapped: the two product entries lead
-                  into the app through <ChatEntryLink>, which owns the
-                  auth-aware chat destination, and Pricing is a plain route. */}
-              <div className="flex flex-col gap-3">
-                <ChatEntryLink className={footerLinkClassName}>
-                  Code scanning
-                </ChatEntryLink>
-                <ChatEntryLink className={footerLinkClassName}>
-                  Exploit simulation
-                </ChatEntryLink>
-                <Link href="/pricing" className={footerLinkClassName}>
-                  Pricing
-                </Link>
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
-                Company
-              </div>
-              <div className="flex flex-col gap-3">
-                {companyLinks.map(({ label, href }) =>
-                  href ? (
-                    <Link key={label} href={href} className={footerLinkClassName}>
-                      {label}
-                    </Link>
-                  ) : (
-                    <a key={label} href="#" className={footerLinkClassName}>
-                      {label}
-                    </a>
-                  ),
-                )}
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-4 text-[13px] font-semibold text-almond_cream-800">
-                Legal
-              </div>
-              <div className="flex flex-col gap-3">
-                {legalLinks.map(({ label, href }) =>
-                  href ? (
-                    <Link key={label} href={href} className={footerLinkClassName}>
-                      {label}
-                    </Link>
-                  ) : (
-                    <a key={label} href="#" className={footerLinkClassName}>
-                      {label}
-                    </a>
-                  ),
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-14 border-t border-black-600 pt-6 text-[13px] text-black-700">
-            © 2026 NETHERITE
-          </div>
-        </div>
       </footer>
     </div>
   );
+}
+
+function ctaClassName(highlight: boolean): string {
+  return `mt-auto rounded-[10px] px-5 py-3.5 text-center text-sm font-semibold transition-opacity hover:opacity-90 ${
+    highlight
+      ? "bg-nether-glow text-nether-on-glow"
+      : "border border-nether-line-strong text-nether-fg-soft"
+  }`;
 }

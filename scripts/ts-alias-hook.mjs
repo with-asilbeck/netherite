@@ -7,16 +7,27 @@
 // things. It exists for the scripts only; nothing in `app/` or `lib/`
 // depends on it.
 
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = new URL("../", import.meta.url);
 
+// A *file*, not merely something that exists: `@/lib/llm` names a directory,
+// and an existence check alone hands Node the directory to read as source
+// (EISDIR) instead of falling through to the /index.ts candidate below.
+function isFile(url) {
+  try {
+    return statSync(fileURLToPath(url)).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function resolveFile(url) {
-  if (existsSync(fileURLToPath(url))) return url.href;
+  if (isFile(url)) return url.href;
   for (const suffix of [".ts", ".tsx", "/index.ts"]) {
     const candidate = new URL(url.href + suffix);
-    if (existsSync(fileURLToPath(candidate))) return candidate.href;
+    if (isFile(candidate)) return candidate.href;
   }
   return url.href;
 }

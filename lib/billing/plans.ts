@@ -53,7 +53,7 @@ export const PLANS: Plan[] = [
     tier: "pro",
     name: "Pro",
     tagline: "For a team shipping to real users every week.",
-    price: { monthly: 2000, yearly: 21900 },
+    price: { monthly: 3500, yearly: 35000 },
     features: ["Everything in Basic"],
     highlight: true,
   },
@@ -61,7 +61,7 @@ export const PLANS: Plan[] = [
     tier: "max",
     name: "Max",
     tagline: "For continuous scanning across a whole codebase.",
-    price: { monthly: 10000, yearly: 107900 },
+    price: { monthly: 12900, yearly: 129000 },
     features: ["Everything in Pro", "Strongest model on every scan stage", "Direct support channel"],
   },
 ];

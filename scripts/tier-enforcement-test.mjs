@@ -265,6 +265,58 @@ async function main() {
   );
   check("and reads as temporary", /try again/i.test(proMessage), proMessage);
 
+  section("3b. The monthly ceiling fires even on a quiet day");
+
+  // Basic carries two invisible ceilings: 100 a day and 700 a month. One
+  // user, two requests, in this order on purpose — served first, then the
+  // month backfilled underneath them. Every backfilled row is dated earlier
+  // in the month, so today's count stays at one and the daily cap cannot be
+  // what refuses. Which ceiling fired is readable from Retry-After: the
+  // daily window is at most 86400 seconds away, the monthly one is days.
+  const softCap = TIER_LIMITS.basic.messages_monthly_soft_cap;
+  const basicChat = await createUserSession(
+    `tier-basic-month-${stamp}@netherite-verify.invalid`,
+    password,
+  );
+  await setTier(basicChat.userId, "basic");
+
+  const basicAllowed = await post("/api/chat", basicChat.cookie, chatBody());
+  check(
+    "a basic user under both ceilings is served",
+    basicAllowed.status === 200,
+    `HTTP ${basicAllowed.status}`,
+  );
+  await basicAllowed.text();
+
+  const now = new Date();
+  const firstOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 12));
+  await fillUsage(basicChat.userId, "chat", softCap, firstOfMonth.toISOString());
+
+  const monthCeiling = await post("/api/chat", basicChat.cookie, chatBody());
+  checkEqual("a basic user at the monthly ceiling gets 429, not 402", monthCeiling.status, 429);
+
+  const monthMessage = String((await readJson(monthCeiling)).error);
+  check(
+    "the refusal names neither the daily nor the monthly ceiling",
+    !monthMessage.includes(String(softCap)) &&
+      !monthMessage.includes(String(TIER_LIMITS.basic.messages_daily_cap)),
+    monthMessage,
+  );
+  check("and names no number at all", !/\d/.test(monthMessage), monthMessage);
+
+  const retryAfter = Number(monthCeiling.headers.get("retry-after"));
+  if (now.getUTCDate() === 1) {
+    // The backdated rows landed today, so the daily cap got there first. The
+    // refusal above is still correct, just not the one under test.
+    console.log("  SKIP  monthly Retry-After (today is the 1st — see comment)");
+  } else {
+    check(
+      "and Retry-After points at the month, not tonight's midnight",
+      retryAfter > 86400,
+      `retry-after=${retryAfter}`,
+    );
+  }
+
   section("4. Caps are counted over the right window");
 
   const windows = await createUserSession(

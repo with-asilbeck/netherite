@@ -51,6 +51,22 @@ export type TierLimits = {
    */
   messages_daily_cap: number;
 
+  /**
+   * Advisor messages per calendar month, UTC — a second fair-use ceiling
+   * behind the daily one, or `null` where the daily cap is the whole story.
+   *
+   * It exists because the two limits stop different things. The daily cap
+   * bounds a burst; a month of sustained daily-cap usage is still 30x what
+   * the plan is priced for, and only a monthly total catches that. Like the
+   * daily cap on a paid tier it is never advertised and never rendered —
+   * `messagesCapIsVisible` governs both.
+   *
+   * Unlike the daily cap, this one is **not** enforced atomically: see
+   * reserveUsage in lib/usage/index.ts. It is a soft ceiling by design, and
+   * a handful of messages either side of it is not worth a second write path.
+   */
+  messages_monthly_soft_cap: number | null;
+
   /** Snippet analyses per calendar month, UTC. User-facing on every tier. */
   snippets_monthly: number;
 
@@ -78,7 +94,8 @@ export type TierLimits = {
 
 export const TIER_LIMITS: Record<Tier, TierLimits> = {
   free: {
-    messages_daily_cap: 200,
+    messages_daily_cap: 50,
+    messages_monthly_soft_cap: null,
     snippets_monthly: 10,
     repo_scans_monthly: 2,
     model_tier: "fast",
@@ -87,9 +104,10 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
     priority_queue: false,
   },
   basic: {
-    messages_daily_cap: 1_000,
-    snippets_monthly: 150,
-    repo_scans_monthly: 25,
+    messages_daily_cap: 100,
+    messages_monthly_soft_cap: 700,
+    snippets_monthly: 100,
+    repo_scans_monthly: 10,
     model_tier: "fast",
     vulnerability_report: false,
     deep_exploit_analysis: false,
@@ -97,8 +115,9 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
   },
   pro: {
     messages_daily_cap: 2_000,
-    snippets_monthly: 750,
-    repo_scans_monthly: 150,
+    messages_monthly_soft_cap: null,
+    snippets_monthly: 200,
+    repo_scans_monthly: 50,
     model_tier: "fast",
     vulnerability_report: true,
     deep_exploit_analysis: true,
@@ -106,8 +125,9 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
   },
   max: {
     messages_daily_cap: 5_000,
-    snippets_monthly: 3_000,
-    repo_scans_monthly: 500,
+    messages_monthly_soft_cap: null,
+    snippets_monthly: 500,
+    repo_scans_monthly: 200,
     model_tier: "best",
     vulnerability_report: true,
     deep_exploit_analysis: true,
@@ -156,6 +176,17 @@ export function limitsFor(tier: Tier): TierLimits {
 
 export function modelTierFor(tier: Tier): ModelTier {
   return TIER_LIMITS[tier].model_tier;
+}
+
+/**
+ * The monthly advisor-message ceiling, or null where there isn't one.
+ *
+ * Read by the reservation path only. Nothing renders it: it sits behind the
+ * same "unlimited messages" claim the daily cap does, so
+ * `messagesCapIsVisible` applies to it unchanged.
+ */
+export function monthlySoftCapFor(tier: Tier): number | null {
+  return TIER_LIMITS[tier].messages_monthly_soft_cap;
 }
 
 /**

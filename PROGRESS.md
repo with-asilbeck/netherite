@@ -1647,3 +1647,351 @@ header row plus four category rows, all four browser-settings links intact, and
    built, `app/cookie/page.tsx` is the template — the `Section`, `Bullets`, and
    `ExternalLink` helpers are local to it and worth lifting into
    `components/` at the second legal page, not before.
+
+---
+
+## 2026-08-03 — Landing page rebuilt from the Claude Design import
+
+`app/page.tsx` is now the dark "Break in before they do." composition from the
+Claude Design project (`Netherite.dc.html`), replacing the cream/marquee page.
+Nav → hero → capabilities → live detection → pricing → CTA → footer, on
+`#08090c` with an emerald accent, Space Grotesk for display and JetBrains Mono
+for the labels and the feed.
+
+**It is dark on both themes, deliberately.** Every color on this page is a
+literal, and the landing palette (`--color-nether-*`) is registered in
+`@theme inline` *separately* from the semantic tokens, which are the ones that
+swap under `.dark`. A reader on the light theme sees the same page. Because the
+landing tokens are literals rather than the two-level `var()` indirection the
+semantic set uses, alpha modifiers work here — `bg-nether-void/55` compiles to a
+real alpha, unlike `bg-accent/50` (see the warning above `--border-strong`).
+
+**Fonts are page-scoped.** `spaceGrotesk` and `jetbrainsMono` join `inter` in
+`lib/fonts.ts` and are applied on the landing wrapper, not in the root layout,
+so the rest of the app stays on Geist and only this route downloads them. The
+design's `<link>` to `fonts.googleapis.com` is not carried over — `next/font`
+self-hosts, which is also what keeps the CSP-free page free of a third-party
+request.
+
+**Three client islands, everything else server-rendered:**
+
+- `components/landing/particle-field.tsx` — the drifting node graph. Capped at
+  `devicePixelRatio` 2, one particle per 22,000 px² of viewport, and it draws a
+  single static frame with no rAF loop when `prefers-reduced-motion` is set.
+- `components/landing/live-feed.tsx` — the simulated findings ticker. Seeded
+  from the front of the pool so the first paint matches SSR (a random pick would
+  be a hydration mismatch), then **cycled**, not re-randomised — the pool is
+  larger than the six-line window, so the visible lines are always six different
+  findings. The design's invented `CVE-2026-1183` was replaced with a real,
+  checkable claim about `lodash@4.17.11`.
+- `components/landing/reveal.tsx` — scroll reveal. The hidden state is the
+  `.nether-reveal` class, not React state, so the observer toggles one class
+  instead of re-rendering the section, reduced motion is a media query, and a
+  browser with no `IntersectionObserver` reveals on mount. Content is never left
+  stranded at `opacity: 0`.
+
+**Pricing is rendered from the real catalogue, not from the mockup's copy.**
+The design shipped Solo/Team/Max/Enterprise at Free/$49/$129/Custom, none of
+which exist. The four cards are now Free plus `PLANS`, with prices from
+`formatPrice(plan.price.monthly)` — the same display strings
+`billing-verify-variants.mjs` checks against the live Lemon Squeezy variants —
+and bullets derived from `TIER_LIMITS` and `FEATURE_LABELS`, so the page cannot
+advertise a cap or a capability the API withholds. The "18,400+ exploit
+patterns / <45ms per file" stat pair was likewise replaced with Max's real
+monthly scan and snippet caps. Paid CTAs route to `/pricing`, where the real
+checkout table lives; Free goes through `ChatEntryLink` like every other entry
+point.
+
+**Nav and footer keep the real routes.** The mockup's nav had no login link;
+it is back, next to Product/Pricing/Docs. Footer columns map to `/about`,
+`/docs`, `/docs/getting-started`, `/policy`, `/cookie` — no `href="#"`
+placeholders were introduced.
+
+**The hero's cursor-following glow was cut.** The mockup put a 700px radial
+gradient behind the hero that tracked the pointer; inside a `max-w-[1200px]`
+section it clipped to a hard-edged rectangle on wide viewports, which read as a
+rendering bug rather than an effect. The hero is a plain `<section>` again and
+`components/landing/spotlight.tsx` is gone. The canvas still draws its faint
+lines toward the cursor — that is the particle field, not the glow.
+
+The mark is the existing `public/netherite-mark.png` under a plain `invert`
+(it is dark artwork on transparent, the same reason the old page used
+`dark:invert`); no new asset was imported.
+
+`.marquee-track` also picked up the reduced-motion guard it was missing, noted
+earlier in this file.
+
+Verified: `tsc --noEmit` and `eslint` clean on the changed files, `next build`
+green, and a dev render driven through CDP at 390 / 1024 / 1440 px —
+`scrollWidth === clientWidth` at every width (no horizontal overflow), grids
+collapsing 3→2→1, and the generated CSS carrying the new utilities with their
+alpha intact.
+
+**Next**
+
+1. `components/scroll-link.tsx` and the `.marquee-track` keyframes are now
+   unreferenced — the old landing page was their only consumer. Delete them at
+   the next cleanup unless something else is about to want them.
+2. The page is dark while `body` still paints the themed background behind it;
+   only overscroll shows it. If that ever reads as a flash, the fix is a
+   route-scoped background, not a global one.
+3. The feed, the capability copy, and the "all systems nominal" line are
+   marketing text with nothing behind them. If a real status endpoint ever
+   exists, that footer line should read from it or lose the dot.
+
+---
+
+## 2026-08-04 — Landing page follows the theme
+
+The landing page was a fixed dark composition; it now has a light theme and
+follows next-themes like every other page. No toggle was added — `/pricing`,
+`/docs`, and `/404` all inherit silently too, and the only toggle in the app
+still lives in the chat sidebar.
+
+**Light is the same page on paper, not an inverted one.** The background is the
+app's warm cream (`almond_cream-800`), the same value `--background` uses, so
+moving between `/` and `/pricing` isn't a temperature jump and the overscroll
+area matches. Text steps down through the stone_brown scale instead of the cool
+260-hue one. The emerald deepens from `oklch(0.78 0.16 165)` to
+`oklch(0.52 0.12 165)`: the dark theme's accent is a *light* green, and light
+green text on cream is around 1.8:1.
+
+**Two things could not be a straight swap.** A filled emerald button keeps a
+deep fill in both themes, so its label can't be the page background — it is now
+`--nether-on-glow`, dark on the dark theme and near-white on the light one,
+where `text-nether-void` used to work by coincidence. And the raised surfaces
+were `white/[0.025]`-style overlays, which are invisible on cream; on the light
+theme the cards go *lighter* than the page (near-white on cream) rather than
+adding white to a void.
+
+**Every translucent step is now a named token, not a `/NN` modifier.** There
+are ~28 of them (`--nether-line-faint` … `--nether-glow-edge-strong`), each
+carrying its own alpha, and the reason is mechanical: the values have to move
+into `:root` / `.dark` blocks to swap with the theme, and an alpha modifier
+can't survive that var indirection — the same limitation already documented
+above `--border-strong`. Baking the alpha in also lets the light theme change
+an overlay's *color*, which is what the surface inversion above needs. The
+`@theme inline` block registers each as a Tailwind color, so the markup reads
+`bg-nether-surface` / `border-nether-line` instead of `bg-white/[0.025]`.
+
+**The canvas reads the palette instead of hardcoding it.** `--nether-particle-rgb`
+and `--nether-link-rgb` are channel triplets rather than colors, because every
+line is stroked at its own distance-based alpha (`rgb(${triplet} / ${a})`). A
+`MutationObserver` on `<html class>` re-reads them when the theme flips, so the
+field repaints in place — verified by flipping the class with no reload and
+confirming both the repaint and that `getComputedStyle` on the canvas returns
+the dark triplet. The static reduced-motion frame is redrawn explicitly on that
+event, since it has no loop to pick the change up on.
+
+**The mark.** `invert` became `dark:invert` — it is dark artwork on
+transparent, so it stands on its own over cream and inverts to white over the
+void. Same file, both themes, no second asset.
+
+Also: `--nether-glow-tile` exists as its own step because the 38px square
+capability icon sits next to solid-filled shapes, and the 24% badge wash it
+shared reads as washed out against them on white.
+
+Verified: `eslint` and `tsc --noEmit` clean, `next build` green, and CDP renders
+at 1440px under both `prefers-color-scheme` values plus a live class flip —
+dark is pixel-unchanged from before this entry, and neither theme has
+horizontal overflow.
+
+**Theme switcher in the navbar** (`components/landing/theme-switcher.tsx`).
+Three inline segments — Light / Dark / System — not a two-state flip, because
+`system` is the app's default and a binary toggle is a one-way door out of it:
+once you pick a side there would be no way back to "follow the OS". Same three
+options the chat sidebar's profile menu offers, and it writes through the same
+next-themes store, so a choice made on the marketing page is the choice the app
+opens with. `role="radiogroup"` with three `role="radio"` buttons, matching the
+billing-period control in `components/pricing-table.tsx`.
+
+The selected theme is only knowable in the browser, so the segments render
+unselected until hydration. That reads through `useSyncExternalStore(subscribe,
+() => true, () => false)` rather than the usual `setMounted(true)` in an effect
+— `react-hooks/set-state-in-effect` rejects the latter, and this is a value
+that never changes again after the first client render.
+
+Hidden below `sm`, where the row is already just wordmark + CTA. Nothing is
+lost there: with no stored choice the page follows the device setting.
+
+Verified by driving it over CDP: a fresh load with `prefers-color-scheme:
+light` and nothing in localStorage selects System and renders light; clicking
+Dark puts `dark` on `<html>`, writes `theme=dark`, and the canvas re-reads the
+dark triplet without a reload; clicking System clears back to the OS setting.
+
+---
+
+## 2026-08-04 — New tier limits, and a second message ceiling
+
+`lib/tiers.ts` is the only place the numbers changed; everything that renders
+or enforces them reads from there, so the landing page, `/pricing`, the usage
+dashboard, and the API all moved together.
+
+| tier  | repo scans / mo | snippets / mo | messages          |
+| ----- | --------------- | ------------- | ----------------- |
+| free  | 2 (unchanged)   | 10 (unchanged)| 200 / day, shown  |
+| basic | 25 → **15**     | 150 → **100** | 1000/day → **100/day + 700/month** |
+| pro   | 150 → **50**    | 750 → **200** | 2000 / day        |
+| max   | 500 → **200**   | 3000 → **500**| 5000 / day        |
+
+Pro's "structured reports and attack-chain explanation" and Max's "everything
+in Pro plus the strongest model on every scan stage" needed no change —
+`vulnerability_report`, `deep_exploit_analysis` and `model_tier: "best"`
+already say exactly that, and the pricing surfaces already render those labels.
+`priority_queue` was left on for pro/max: it wasn't in the new spec, but it
+wasn't struck from it either, and it is a capability those plans have today.
+
+**The monthly message ceiling is new machinery, not a new number.**
+`messages_monthly_soft_cap` is the first cap that doesn't match its action's
+declared window — `chat` is enforced per day, and this one is per month.
+
+It is deliberately *not* enforced in `reserve_usage`. That function reserves
+against exactly one window, and calling it twice would insert two rows and
+double-count every message. So the monthly ceiling is a **read** in
+`reserveUsage` before the reservation: two simultaneous requests can both pass
+it, which is why the field says *soft*. Being a few messages over an invisible
+fair-use ceiling costs nothing; a second write path through the ledger, or a
+migration to a two-window reserve, would cost more than it protects. The daily
+cap is untouched and still atomic under the advisory lock.
+
+Both ceilings stay invisible — `messagesCapIsVisible` governs the pair, so a
+basic user who reaches either gets the same 429 and the same say-nothing copy.
+The only difference is `Retry-After`, which points at the month rather than
+tonight's midnight; `secondsUntilReset(window)` was split out of
+`secondsUntilWindowReset(action)` for that, since the action's own window is
+the wrong answer here.
+
+**Verification.** `node scripts/tier-config-test.mjs` — 148/148, with the SPEC
+table retranscribed to the new numbers and a new section 3b asserting the
+monthly ceiling is invisible, that it can bind before 31 days of daily ones
+(700 < 100 x 31 — a monthly cap above that could never fire), and that the
+refusal copy names neither number.
+
+`node scripts/tier-enforcement-test.mjs` — a new end-to-end section 3b puts one
+user on basic, confirms they are served, backdates 700 chat rows to the 1st of
+the month so today's count stays at one, and asserts the next request is 429
+with no number and a Retry-After measured in days rather than hours. That last
+assertion is what proves the *monthly* ceiling fired rather than the daily one.
+
+Two repairs the suites needed before any of that could run:
+
+- `scripts/ts-alias-hook.mjs` resolved `@/lib/llm` to the *directory* (its
+  `existsSync` was true for it) and handed Node a directory to read as source —
+  EISDIR, before a single assertion. It now checks for a file, so the
+  `/index.ts` candidate it already had can be reached.
+- `tier-config-test.mjs` still imported `../lib/openrouter.ts`, deleted when
+  the clients moved to `lib/llm`. Pointed at `lib/llm/models.ts`.
+
+**Pre-existing failures the enforcement suite still reports (12), none of them
+tier-limit related:**
+
+1. Eleven repo-scan assertions expect 402 and get **403 "Connect your GitHub
+   account to scan repositories."** The ownership gate in
+   `app/api/repo-scan/run/route.ts` runs *before* `reserveUsage` — deliberately,
+   so a refused scan costs no quota — and the suite's throwaway users have no
+   GitHub connection, so those requests never reach the cap. The suite predates
+   that gate. Fixing it means seeding a `github_connections` row and stubbing
+   the GitHub call, which is its own change.
+2. One chat assertion expects 200 and gets **401**, and it is the only
+   assertion in the file that needs a *successful* model call. The advisor is
+   down in this environment: `GEMINI_API_KEY` in `.env.local` is rejected by
+   Google with `401 UNAUTHENTICATED` on a direct one-token call, and
+   `app/api/chat/route.ts:278` forwards the upstream status verbatim. Nothing to
+   do with tiers; see below.
+
+**Next**
+
+1. **The advisor is returning 401 right now.** The Gemini key is invalid, not
+   rate-limited (`ACCESS_TOKEN_TYPE_UNSUPPORTED`, not a 429). Every chat request
+   that gets past the caps fails. Rotate the key.
+2. **"Unlimited advisor messages" is now a weaker claim than it was.** At
+   1000/day the fair-use ceiling was unreachable by a human; 700/month is about
+   23/day, which an engaged user can hit in a busy week — and what they get is
+   a deliberately vague "try again later" that reads as a bug, because the copy
+   was written for a ceiling nobody would meet. Either raise the monthly number
+   or make it visible and advertised, in which case
+   `messagesCapIsVisible("basic")` and the copy path change with it.
+3. `components/pricing-table.tsx` renders "Unlimited advisor messages" twice on
+   Basic — once from the cap row, once from `PLANS.basic.features`, which the
+   plans file's own comment says is for selling points *beyond* the caps.
+   Pre-existing, now more visible next to the shorter cap list. Removing the
+   string from `PLANS` is the fix, but it also drops the line from the landing
+   card, which has no cap row for chat — worth deciding deliberately rather
+   than in passing.
+
+---
+
+## 2026-08-04 — Free's message cap cut, Pro and Max repriced
+
+Free: **200 → 50 advisor messages a day**. It is free's one advertised cap, so
+unlike the paid ceilings it is rendered and named in the refusal — the copy
+path picks the new number up on its own (`upgradeMessage` formats whatever
+`limitFor` returns). The config suite's assertion on that copy now reads the
+cap from SPEC instead of restating `200`, so the next change to it can't leave
+the test checking a number nothing enforces.
+
+Prices, monthly and yearly, in `lib/billing/plans.ts`:
+
+| plan  | monthly       | yearly           | yearly discount |
+| ----- | ------------- | ---------------- | --------------- |
+| Basic | $9.99 (same)  | $99.00 (same)    | 17%             |
+| Pro   | $20 → **$35** | $219 → **$350**  | 16.7%           |
+| Max   | $100 → **$129** | $1,079 → **$1,290** | 16.7%      |
+
+Only the monthly figures were specified; yearly was set to ten months of the
+new monthly price, which lands both paid tiers within a rounding point of
+Basic's existing 17% rather than leaving them at the 48% and 30% implied
+discounts that keeping the old yearly prices would have created.
+
+**These are display values. Nothing has been charged differently.**
+`node scripts/billing-verify-variants.mjs` now fails four assertions, which is
+the file doing its job — the live variants still charge the old amounts:
+
+| variant | env var | charges | should charge |
+| ------- | ------- | ------- | ------------- |
+| 1969700 | `LEMONSQUEEZY_VARIANT_PRO_MONTHLY` | $20 | $35 |
+| 1969703 | `LEMONSQUEEZY_VARIANT_PRO_YEARLY`  | $219 | $350 |
+| 1969701 | `LEMONSQUEEZY_VARIANT_MAX_MONTHLY` | $100 | $129 |
+| 1969705 | `LEMONSQUEEZY_VARIANT_MAX_YEARLY`  | $1,079 | $1,290 |
+
+Until those are edited in the Lemon Squeezy dashboard, the pricing page quotes
+$35 and the checkout takes $20. Basic's two variants still match and were left
+alone.
+
+**The yearly-savings badge was quietly lying, and this made it worse.** One
+badge sits above three plans with different discounts and it quoted
+`PLANS[0]` — Basic's. With the old numbers that advertised 17% over a Pro plan
+that saved 8.75%. It now quotes the smallest of the three, which is what
+`yearlySavingPercent`'s round-down was already trying to guarantee. Reads
+"save 16%" today.
+
+Verified: `tier-config-test.mjs` 148/148, `tsc --noEmit` and `eslint` clean, and
+a dev render showing 50/day on Free, $35 on Pro, $129 on Max, and the corrected
+badge.
+
+**Next**
+
+1. Update the four Lemon Squeezy variants above, then re-run
+   `npm run verify:billing:variants` until it is green. Existing subscribers
+   keep the price they signed up at — Lemon Squeezy does not reprice live
+   subscriptions when a variant changes, which is worth being deliberate about
+   rather than discovering later.
+2. Free at 50 messages a day is a third of what it was. That cap *is* visible,
+   so the 402 will name it and point at Basic — worth watching whether it reads
+   as a trial or as a wall.
+
+---
+
+## 2026-08-04 — Basic's repo scans: 15 → 10
+
+Supersedes the Basic row in the limits table two entries above. One number in
+`lib/tiers.ts` and its transcription in `scripts/tier-config-test.mjs`; every
+surface reads through, so `/` and `/pricing` both say 10 without further edits.
+The ladder stays ascending — free 2, basic 10, pro 50, max 200.
+
+Nothing else moved: Basic keeps 100 snippet analyses a month and the 100/day +
+700/month message ceilings, and its two Lemon Squeezy variants are still the
+ones that match `plans.ts`.
+
+Verified: `tier-config-test.mjs` 148/148, `tsc --noEmit` clean, and both pages
+rendering 10 against the dev server.

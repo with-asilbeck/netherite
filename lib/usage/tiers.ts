@@ -141,7 +141,16 @@ export function invisibleCapMessage(): string {
 
 /** Seconds until the current window rolls over, for a Retry-After header. */
 export function secondsUntilWindowReset(action: ActionType, now: Date = new Date()): number {
-  if (ACTION_WINDOWS[action] === "day") {
+  return secondsUntilReset(ACTION_WINDOWS[action], now);
+}
+
+/**
+ * The same arithmetic keyed on the window itself, for the one cap that
+ * isn't the action's declared window — the monthly message soft ceiling,
+ * which is enforced on `chat` (a daily-windowed action).
+ */
+export function secondsUntilReset(window: "day" | "month", now: Date = new Date()): number {
+  if (window === "day") {
     const midnight = Date.UTC(
       now.getUTCFullYear(),
       now.getUTCMonth(),
