@@ -210,7 +210,7 @@ export default function Home() {
       <nav className="sticky top-0 z-50 flex items-center gap-4 border-b border-nether-line bg-nether-scrim px-6 py-4 backdrop-blur-xl sm:px-12">
         <div className="flex flex-1 basis-0 items-center gap-2.5">
           <Wordmark size={34} />
-          <span className="font-code text-[15px] font-semibold tracking-[0.12em]">
+          <span className="text-[34px] tracking-[0.12em] leading-none translate-y-[0.11em] font-brand">
             NETHERITE
           </span>
         </div>
@@ -446,7 +446,7 @@ export default function Home() {
         <div>
           <div className="mb-3 flex items-center gap-2.5">
             <Wordmark size={28} />
-            <span className="font-code text-[13px] font-semibold tracking-[0.1em]">
+            <span className="text-[28px] tracking-[0.1em] leading-none translate-y-[0.11em] font-brand">
               NETHERITE
             </span>
           </div>

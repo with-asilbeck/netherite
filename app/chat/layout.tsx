@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/server";
 import { conversationLabel } from "@/lib/conversations";
 import { ChatSidebar } from "@/components/chat-sidebar";
@@ -81,14 +80,14 @@ export default async function ChatLayout({
   ]);
 
   return (
-    <div className={`${inter.variable} h-screen w-full font-sans`}>
+    <div className="h-screen w-full font-sans">
       {/* Wraps the sidebar and the chat view together: sending the first
           message in a draft has to add a row to Recents, and pressing
           "New chat" in the sidebar has to clear the view. */}
       <ChatSessionProvider initialConversations={conversations}>
         <ChatShell
           sidebar={<ChatSidebar userEmail={user?.email} />}
-          // Renders nothing on the top tier — see UpgradeButton.
+          // Renders only on free and basic — see UpgradeButton.
           headerRight={user ? <UpgradeButton tier={tier} /> : null}
         >
           {children}

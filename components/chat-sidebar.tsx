@@ -176,7 +176,7 @@ export function ChatSidebar({ userEmail }: { userEmail?: string | null }) {
           height={24}
           className="h-6 w-6 object-contain dark:invert"
         />
-        <span className="text-sm font-semibold tracking-tight">
+        <span className="text-[24px] leading-none translate-y-[0.11em] font-brand">
           NETHERITE
         </span>
       </div>

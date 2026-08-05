@@ -1995,3 +1995,548 @@ ones that match `plans.ts`.
 
 Verified: `tier-config-test.mjs` 148/148, `tsc --noEmit` clean, and both pages
 rendering 10 against the dev server.
+
+---
+
+## 2026-08-05 — Syntax highlighting and per-block copy in chat
+
+Fenced code blocks in chat messages now render highlighted, with their own copy
+button. Inline code (single backticks) is untouched and stays plain — a
+two-word span mid-sentence gets neither a palette nor a button.
+
+**Library: `react-syntax-highlighter` v16, on the `prism-light` build.**
+Chosen over Shiki because the advisor streams: Shiki's highlighter is async and
+would land a frame behind every token, where Prism tokenizes synchronously.
+`prism-light` registers no grammars by default, so `components/code-block.tsx`
+opts in to eleven — the six the security prompts actually emit (javascript,
+typescript, python, sql, json, bash) plus jsx/tsx, markup, yaml and diff.
+Registering a grammar pulls in what it is built on and its own aliases, so
+`js`/`ts`/`py`/`sh`/`yml`/`html` resolve for free; an `ALIASES` map covers what
+that misses (`zsh`, `console`, `postgres`, `jsonc`, …). An unrecognised hint is
+caught upstream and falls back to unhighlighted text, so it can't throw.
+
+**v16 rather than the far more common v15 — v15 is the one with a CVE.** It
+pins `prismjs` <1.30 through refractor (GHSA-x7hr-w5r2-h6wg, DOM clobbering).
+Not reachable the way this app uses it, but shipping a flagged Prism inside a
+product that tells people to patch their dependencies is not a good look, and
+v16 is the maintainers' fix. `npm audit` after the swap is back to the four
+pre-existing Next-toolchain advisories.
+
+**One syntax palette, not a light one and a dark one.** `--code` was already
+dark on *both* themes (`black-500` on light, `jet_black-100` on dark), so a
+code block is light-on-dark either way and a second "light mode" palette would
+be styling a background that never renders. The `--syntax-*` tokens in
+`globals.css` are the only theme tokens in that file with no `.dark`
+counterpart, and the comment there says why. Hues are the brand's — emerald and
+violet from the landing accent pair, warm khaki/amber off the neutral ramp —
+rather than a stock Prism theme's. All nine were checked against both code
+backgrounds before being committed to: lowest is `comment` at 5.7:1, all clear
+AA, all inside sRGB.
+
+**Where the block/inline split is decided.** In the `pre` override, not the
+`code` one. react-markdown dropped the `inline` prop in v9, and the usual
+workaround — treat anything with a `language-*` class as a block — silently
+demotes an unlabelled ``` fence to an inline span. `pre` wrapping `code` is
+exactly the shape a fenced block has and nothing else does. The language comes
+off that node's own `language-*` class, so it is read from the model's fence
+rather than specified anywhere.
+
+**Copy button.** Reuses `components/copy-button.tsx` rather than reimplementing
+the clipboard — that file already had the secure-context fallback, the unmount
+timer cleanup and the `aria-live` confirmation. It gained a `tone` prop: the
+default's `text-muted-foreground` is a mid stone brown that all but vanishes on
+the near-black code surface. A prop and not a passed-in `className`, because
+both tones set `color` and Tailwind resolves competing utilities by stylesheet
+order, not class-attribute order — an override would win or lose at random.
+Copies the code only, never the language label, and reveals on hover from `sm`
+up while staying visible on touch, matching the message-level button.
+
+Two details worth keeping:
+
+- `CodeBlock` is memoized. Without it, every token appended to a streaming
+  reply re-tokenizes *every* code block already rendered in that message.
+- The block uses a **named** group (`group/code`). The message row in
+  `chat-view.tsx` is already an unnamed `group`, and an unnamed `group-hover`
+  would have revealed the copy button whenever the pointer was anywhere in the
+  message.
+
+Verified against a throwaway route rendering `MessageContent` in the real chat
+bubble markup, driven by Playwright in both themes: all six target languages
+produce 6–8 distinct token colours; the clipboard round-trips the SQL block
+byte-for-byte with no label and no trailing newline; the confirmation flips to
+"Copied" and reverts; inline code has zero token spans and zero buttons; and a
+deliberately unterminated fence cut mid-token — what the renderer sees on
+nearly every frame while streaming — still renders as a highlighted block with
+a working button and no console errors. `tsc --noEmit`, `eslint` and
+`next build` all clean. The route was deleted afterwards.
+
+Coverage needed no other wiring, which is worth recording: `/try` renders
+`ChatView` directly (and redirects signed-in users into it), and a repo-scan
+report arrives as an ordinary assistant message — `chat-view.tsx` drops
+`report.markdown` into `message.content`. Both already go through
+`MessageContent`, so both got this for free.
+
+**Next**
+
+1. The eleven grammars are a bet on what the *prompts* emit. Repo scanning
+   reads whatever the user's repo is written in, so a Go, PHP, Java or Ruby
+   fence renders flat today — correct-looking, just unhighlighted. Add
+   grammars when real scans show them rather than pre-emptively; each one is
+   bytes on the client.
+2. `--syntax-*` is chat's only consumer right now. Anything else that grows a
+   code surface should read those tokens instead of starting a third palette.
+
+---
+
+## 2026-08-05 — Snippet re-analysis: follow-up awareness and clean verdicts
+
+### First: snippet analysis was never isolated
+
+The premise this started from turned out to be false, and that is the useful
+finding. Snippet submissions already carry the full conversation:
+
+- `app/chat/chat-view.tsx:790` builds `history` from every prior non-error
+  message and posts all of it.
+- `app/api/chat/route.ts:246` slices the last `MAX_CONTEXT_MESSAGES` (30) and
+  sends that to the model.
+
+There is no separate snippet endpoint. `buildMessageContent` folds an attached
+file into the message text so it travels the ordinary `/api/chat` path — the
+comment there ("no parallel LLM path") is accurate. The `snippet` usage action
+is metered in `app/api/attachments/route.ts`, which is *metering only*; the
+model call is still the chat call. So the prior snippet and the prior fix were
+already in context, verbatim.
+
+**So no context-plumbing was needed, and none was added.** What was actually
+missing was never context — it was instruction. The model had the earlier turns
+and no reason to treat a resubmission as anything but a new snippet.
+
+### What changed
+
+Two sections added to `CHAT_ADVISOR_SYSTEM_PROMPT` in `lib/llm/prompts.ts`:
+
+- **"When the code is fine"** — permits and encourages a clean verdict, and
+  asks for what was looked for and what the verdict assumes, so "no issues"
+  arrives as a result rather than an empty reply.
+- **"Re-reviewing code you have already seen"** — open by naming what changed
+  and which earlier finding it resolves, *then* everything else; and label
+  anything raised as **New** / **Still outstanding** / **Pre-existing**. That
+  last label is the one that does the work: it is how a user tells a genuinely
+  new problem from one that was always there and simply wasn't mentioned.
+
+### Temperature was already handled — and is lower than asked for
+
+`lib/llm/google.ts#baseConfig` has sent `temperature: 0` on every Google call,
+streaming included, since the OpenRouter migration. 0 is *stricter* than the
+0.2–0.3 requested, and raising it would have moved in the wrong direction for
+run-to-run consistency, so it was left alone and the comment extended to say
+that chat depends on it now too — a future "make chat read more naturally"
+edit would land its variance on security verdicts.
+
+The Anthropic path deliberately sends no `temperature` at all (sampling params
+are removed on Opus 5; a request carrying one is a 400 — see CLAUDE.md). That
+asymmetry is fine today because the advisor is Gemini and stays Gemini, but it
+means determinism here is a Google-path guarantee, not a portable one. Worth
+knowing if `anthropic-swap-back` ever widens beyond repo scanning.
+
+### Verified
+
+Against the real route, as a guest (`/api/chat` has no login gate), so the
+actual prompt, model and history handling were exercised rather than a
+reconstruction. Every check run twice with identical input, since consistency
+is the point and one good reply proves nothing:
+
+- **Re-submission** — submit a concatenated-SQL Express handler, take the
+  model's own fix, submit it back. Both runs opened by crediting the fix
+  ("resolves the SQL Injection vulnerability identified in the first review"),
+  neither re-flagged the resolved SQLi, and both labelled the remaining IDOR
+  **Pre-existing** with its assumption stated. Runs agreed.
+- **Clean code** — a pure `Intl.NumberFormat` helper with no security surface.
+  Both runs returned an explicit clean verdict, listed what was checked, noted
+  the caller-side assumption, and proposed no fix. Runs agreed.
+
+`tsc --noEmit`, `eslint` and `next build` clean.
+
+**Next**
+
+1. The two prompt sections are only reachable through chat. If a future
+   snippet surface ever bypasses `/api/chat`, it inherits neither — the
+   guarantee lives in the prompt, not in the route.
+2. Worth watching whether "Pre-existing" gets used as a hedge on genuinely new
+   issues. The label is only useful while it is accurate, and nothing verifies
+   it.
+
+---
+
+## 2026-08-05 — User messages render literally, not as markdown
+
+### The reported bug was not the bug
+
+The premise was that user bubbles rendered as plain text and mangled pasted
+code. They did not. `chat-view.tsx` passed user content to the same
+`MessageContent` as the assistant side — react-markdown with remark-gfm — and
+that component's own docstring said so ("user bubbles, assistant bubbles"). No
+commit or entry here records a decision to keep user input unparsed.
+
+Measured in the DOM before touching anything: a pasted fence in a user bubble
+produced a real `<pre>`, `white-space: pre`, Geist Mono, correct indentation,
+110 syntax-token spans and a copy button. **Whitespace was never being lost.**
+
+What *was* happening is the opposite problem, and it is worse than cosmetic:
+markdown was executing on user input and corrupting ordinary prose.
+`**auth**.js` lost its asterisks and went bold. `_internal_` went italic. A
+line beginning `1997.` became list item 1 — **the number was deleted from the
+message.** In a tool whose users paste paths, globs, regexes and port numbers,
+that is silent data loss in the transcript the model is also reading.
+
+No XSS: react-markdown emits no raw HTML without `rehype-raw`, and there is
+still no `dangerouslySetInnerHTML` anywhere in the app.
+
+### What changed
+
+New `components/user-message-content.tsx`, used for the user branch only.
+Everything typed renders as literal text; fenced blocks are located by a
+line scanner and handed to the existing `CodeBlock`.
+
+Line-based, not one global regex. `/```[\s\S]*?```/g` cannot distinguish an
+opening fence from a closing one, so an odd number of fences — or a stray ```
+inside prose — silently swallows the rest of the message. The scanner tracks
+opener length, requires a closing fence of at least that many backticks, and
+treats an unclosed fence as running to the end (what markdown does, and what a
+half-pasted snippet looks like).
+
+Detection is a *styling* decision, not a parsing one. The fence says where the
+code is; nothing inside or outside it is interpreted. Plain runs get
+`whitespace-pre-wrap`, so a pasted stack trace keeps its indentation without a
+fence — which the old markdown path collapsed.
+
+`MessageContent`'s docstring was corrected: it renders model-authored text
+(assistant replies, repo-scan reports), not user input.
+
+### Verified
+
+Throwaway route rendering user bubbles in the real chat markup, driven by
+Playwright in both themes, 24 assertions:
+
+- **Pasted code between two sentences** — one highlighted block (110 token
+  spans), copy button, indentation intact, and exactly two plain-text runs
+  around it that are *not* monospace.
+- **Prose with markdown characters** — zero `strong`, `em`, `ol/ul`, `h1-h3`,
+  `a` elements. `**auth**.js`, `_internal_`, `1997.`, `# shell comment`,
+  `- literal dash` and `[link](url)` all survive verbatim.
+- **Markup inside and outside a fence** — `<script>`, `<img onerror>`,
+  `<iframe javascript:>` and `<b>` produce zero live nodes and zero
+  event-handler attributes; all present only as visible text.
+- **Multi-line text with no fence** — no code block invented, line breaks and
+  leading indentation preserved.
+
+One assertion initially failed on `svg` count. It was the copy button's own
+icon (`.closest("button")` confirmed it), not injected markup — payload tag
+count was 0 throughout. The check now excludes our own chrome rather than the
+tag class.
+
+`tsc --noEmit`, `eslint` and `next build` clean.
+
+**Next**
+
+1. Composer input is still a plain textarea. Now that fences are load-bearing
+   in the transcript, a "paste as code block" affordance would stop users
+   hand-typing backticks to get the formatting they just saw.
+2. `conversation-row.tsx` previews raw message text in the sidebar, so a first
+   message that opens with a fence shows literal backticks there. Cosmetic,
+   pre-existing, unchanged by this.
+
+---
+
+## 2026-08-05 — Sans face is San Francisco; Geist sans and Inter removed
+
+### The app was loading three sans faces and rendering none of them reliably
+
+Before this, `--font-sans` mapped to Geist, eleven page wrappers each spread
+`${inter.variable}` into their className, and `body` carried a hardcoded
+`font-family: Arial, Helvetica, sans-serif` left over from create-next-app.
+
+Those three facts contradicted each other. `inter.variable` only *declares*
+`--font-inter` — it does not set `font-family` — and nothing anywhere read that
+variable, so Inter was fetched on almost every route and rendered on none of
+them. Meanwhile `font-sans` resolved through globals.css to Geist, and anything
+that did *not* opt into `font-sans` fell through to Arial, because `body` said
+so. "The rest of the app stays on Geist" was true only by the convention that
+every page wrapper remembered to add the class.
+
+### San Francisco is a system stack, not a download
+
+Apple licenses SF for use on Apple platforms only. There is no webfont to
+self-host and it is not on Google Fonts, so it is requested *by name*:
+
+    --system-sans:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif;
+
+`-apple-system` and `BlinkMacSystemFont` resolve to SF on macOS and iOS.
+Everything after them is the nearest platform equivalent, because on those
+platforms SF is simply absent. **This means SF is not what you see on Windows
+or Android** — a screenshot taken on Windows shows Segoe UI, and that is
+working correctly, not a bug. Worth knowing before judging the type from one
+machine.
+
+Declared as a plain custom property in `:root` and mapped into `--font-sans`
+from `@theme inline`, the same indirection the color tokens use — `body` needs
+the value too and cannot reach into `@theme`.
+
+### What changed
+
+- `--font-sans` now points at `--system-sans` instead of `--font-geist-sans`.
+- `body` uses `--system-sans` instead of hardcoded Arial, so the app's face is
+  the *default* rather than something each wrapper opts into.
+- The Geist sans download is gone from `app/layout.tsx`. **Geist Mono stays** —
+  it still serves `font-mono` for every code block.
+- `inter` removed from `lib/fonts.ts` and from all eleven wrappers. Each lost
+  its import line, and ``className={`${inter.variable} ...`}`` collapsed back to
+  a plain string since that interpolation was always the leading one. Every
+  wrapper keeps its `font-sans`.
+- `lib/fonts.ts` keeps `spaceGrotesk` and `jetbrainsMono`; the landing page is
+  deliberately on its own faces and is untouched by any of this.
+
+### Verified
+
+Measured in a browser rather than read off the source:
+
+- **The stack applies.** Computed `body` font-family on `/login` is the full
+  declared list.
+- **It resolves the way it should.** A canvas width fingerprint of the same
+  string at 16px: `-apple-system`, `BlinkMacSystemFont` and `SF Pro Text` all
+  came back at 208.4 — identical, which is the signature of *no match falling
+  through* — while `system-ui` and `Segoe UI` both measured 223 and Arial 225.
+  So on this Windows machine the text renders as Segoe UI, as intended.
+- **Inter is genuinely gone from the wire.** `/login`, `/pricing` and `/docs`
+  each fetch exactly one font file and carry zero Inter `@font-face` rules. The
+  remaining families are `Geist Mono` plus Next's `__nextjs-Geist` dev-overlay
+  faces, which do not ship in production.
+
+`tsc --noEmit`, `eslint` over app/lib/components, and `next build` all clean;
+no dangling `geist-sans` or `inter` references outside the explanatory comment
+left in `lib/fonts.ts`.
+
+Net: three downloaded sans faces became none, and the rendered face went from
+"Arial or Geist depending on opt-in" to San Francisco everywhere.
+
+**Next**
+
+1. If a *branded* sans is ever wanted, SF cannot be it — the licence is the
+   blocker, not the tooling. That would mean picking a self-hostable face and
+   pointing `--system-sans` (or a new token) at it.
+2. `app/layout.tsx` still preloads Geist Mono on every route, including ones
+   with no code on them. Cheap, but it is now the only font request the app
+   makes, so it is the only one left to question.
+
+---
+
+## 2026-08-05 — Chat upgrade CTA floats centre-top; desktop header row removed
+
+The desktop header row in `components/chat-shell.tsx` is gone. It existed only
+to hold the upgrade button, right-aligned, and its comment said it was
+"deliberately a real row rather than a button floated over the messages"
+because the transcript owns the full height of that pane. **That decision is
+now reversed on purpose**, to reclaim the vertical strip: the button is
+absolutely positioned centre-top over the transcript, and message bubbles pass
+behind it while scrolling.
+
+The trade is real and was accepted knowingly — a bubble can be briefly occluded
+mid-scroll. Two things keep it tolerable:
+
+- The button is opaque (`bg-foreground`), so it is never *unreadable*, only
+  overlapping.
+- A `backdrop-blur-md` pill sits around it, giving it an edge to rest on
+  instead of butting into a line of text mid-sentence. A pill, not a strip:
+  a full-width blurred bar would be the header block again under another name.
+
+The blur is `backdrop-blur` rather than a translucent fill because
+`bg-background/80` would silently resolve to a solid — those semantic colours
+go through two levels of var indirection and the alpha modifier is dropped,
+the same limitation recorded next to `--border-strong` in globals.css. Blur
+needs no colour token at all.
+
+**The mobile bar was left alone.** It is `md:hidden` and carries the menu
+button, which is the only way to open the sidebar on a phone; removing it would
+have stripped access to Recents and New chat entirely. The upgrade button still
+sits inline there after the wordmark.
+
+`UpgradeButton` was already its own component and still is — the change is
+placement, not extraction. `ChatShell` still receives it through `headerRight`
+so the tier stays server-side; that prop name is now slightly wrong (the two
+placements differ) and its docstring says so.
+
+### Verified
+
+Throwaway route driving `ChatShell` with a fake sidebar and a scrollable fake
+transcript — the shell is self-contained, so this needed no session:
+
+- Button centre is 730px against a pane centre of 730px, i.e. exactly centred,
+  positioned `absolute`, `z-20`, 16px from the top.
+- The positioned layer computes `pointer-events: none` with `auto` restored on
+  the button, and `elementFromPoint` just left of the button returns a message
+  bubble — so clicks along the top edge reach the transcript, not the layer.
+- Mobile at 390px still has its menu button, wordmark and upgrade button.
+
+`tsc --noEmit`, `eslint` and `next build` clean.
+
+**Next**
+
+1. Nothing reserves space at the top of the transcript, so the very first
+   message can sit under the button on a short conversation. If that reads
+   badly in real use, the fix is scroll padding on the transcript rather than
+   bringing the row back.
+
+---
+
+## 2026-08-05 — Upgrade CTA stops at Basic
+
+`UpgradeButton` previously rendered for every tier except `max`, on the logic
+that a button is worth showing wherever there is something above to sell. It
+now renders for `free` and `basic` only — `pro` and `max` get nothing. Someone
+already paying at Pro is not the audience for an upsell pinned over every chat
+screen, and the CTA is now floated over the transcript, so it costs them
+attention on every message rather than sitting in a header they can ignore.
+
+The ceiling is a position in `TIERS`, not `tier === "pro"`:
+
+    const LAST_TIER_WITH_CTA: Tier = "basic";
+    TIERS.indexOf(tier) <= TIERS.indexOf(LAST_TIER_WITH_CTA)
+
+An equality check would silently start showing the CTA again if a tier were
+ever inserted above Basic. This stays in the component rather than moving to
+`lib/tiers.ts`: it grants and withholds nothing, so it is not entitlement, and
+that file is the source of truth for caps and feature flags only.
+
+### The guard depends on UpgradeButton staying a server component
+
+Worth recording because it is invisible and would fail quietly.
+`chat-shell.tsx` gates both placements on `headerRight && ...`. That works only
+because `UpgradeButton` is a **server** component: it is rendered on the server
+before crossing into `ChatShell` (a client component), so what arrives is
+literally `null`, and the guard short-circuits.
+
+Add `"use client"` to `upgrade-button.tsx` and `headerRight` becomes a truthy
+React element that merely *renders* nothing — the wrapper would still be
+emitted, and Pro and Max users would get an empty `backdrop-blur` pill floating
+over their transcript with nothing in it. A note to that effect now sits on the
+prop.
+
+### Verified
+
+Throwaway route rendering the button once per tier plus a `ChatShell` on `pro`:
+
+| tier | button | label |
+| ---- | ------ | ----- |
+| free | yes | "Upgrade to Basic" |
+| basic | yes | "Upgrade to Pro" |
+| pro | no | — |
+| max | no | — |
+
+And on the `pro` shell, an exhaustive walk of every descendant found zero
+elements carrying `backdrop-blur`, zero positioned at `top-0`, and no empty
+absolutely-positioned nodes — so the floating layer is genuinely absent rather
+than present-but-empty.
+
+`tsc --noEmit`, `eslint` and `next build` clean.
+
+---
+
+## 2026-08-05 — Wordmark gets its own face (Arcade)
+
+Every occurrence of the NETHERITE brand name now renders in a dedicated face
+instead of inheriting the body font. 22 occurrences across 13 files: 14
+wordmark lockups (page headers, chat sidebar, mobile bar, landing header and
+landing footer) and 8 `© 2026 NETHERITE` footer credits, where the brand name
+is now wrapped in its own span so the "© 2026" beside it is unaffected.
+
+Wiring, mirroring how the other faces are set up:
+
+- `lib/fonts.ts` loads it with `next/font/local` from `lib/fonts/arcade.ttf`,
+  exposing `--font-arcade`.
+- `app/layout.tsx` puts the variable on `<html>` — unlike the landing-only
+  faces, the brand name appears on nearly every route, so scoping it per page
+  would mean repeating it everywhere.
+- `globals.css` maps `--font-brand: var(--font-arcade)`, giving a `font-brand`
+  utility. The role name lives at the Tailwind token and the font name at the
+  source, so swapping the face again is one line.
+
+`font-semibold` was dropped from every wordmark it was on. The file carries a
+single cut, so that class produced browser-synthesised bold rather than a real
+weight. The landing wordmarks also dropped `font-code` (JetBrains Mono), which
+was their previous deliberate treatment — worth knowing that this overrode a
+prior design decision rather than filling a gap.
+
+### ⚠ Licence: this cannot ship commercially as-is
+
+Arcade is by Jakob Fischer (pizzadude.dk). Its EULA, kept beside the file at
+`lib/fonts/arcade-LICENSE.txt`, says:
+
+> Use this font for non-commercial use only! If you plan to use it for
+> commercial purposes, contact me before doing so!
+> Do not distribute without the author's permission.
+
+Netherite sells paid plans, and serving a font from a web page distributes it,
+so **both clauses are engaged**. Deploying this to netherite.uz needs the
+author's written permission first — jakob@pizzadude.dk. This is a blocker for
+production, not a nice-to-have, and it is invisible in the diff, which is why
+it is recorded here and in the `arcade` docstring.
+
+For context, the face this replaced mid-task (Square Sans Serif 7, Style-7)
+was freeware permitting commercial use in exchange for "a back link or credits
+or donation" — a materially easier condition. Its files were removed.
+
+### Verified
+
+Counted rather than eyeballed: 22 `NETHERITE` occurrences and 22 `font-brand`
+occurrences across the same files. Rendering confirmed in a browser on
+`/login`, `/docs` and `/pricing` — the computed family on the wordmark is
+`arcade, "arcade Fallback"` at weight 400, the TTF appears in the network log
+as `arcade-s.p.*.ttf`, and screenshots show the pixel face on both the header
+lockup and the footer credit.
+
+`tsc --noEmit`, `eslint` and `next build` clean; no dangling `square_sans`
+references.
+
+### Sizing and alignment
+
+Applied at the inherited sizes the wordmark read far too small beside the logo
+mark, and the cause is measurable: **Arcade's cap height is only 44.4% of its
+font-size**. At `text-lg` that was 8px of ink against a 34px mark — 23.5% of
+it, where the previous Geist wordmark sat at roughly 37%.
+
+The rule now is **font-size = the mark's pixel height**, which lands the caps
+at ~47% of the mark. One rule rather than a per-page guess, and it scales: 34px
+on the page headers and landing nav, 28px on `/try` and the landing footer,
+24px in the chat sidebar, 22px in the mobile bar (no mark beside it — sized to
+sit with the sidebar's).
+
+Two alignment fixes travel with it:
+
+- `leading-none`, so the line box equals the font size and `items-center` has
+  something predictable to centre.
+- `translate-y-[0.11em]`, because Arcade draws its glyphs high inside the em —
+  the ink sits 0.11em above the box centre, so `items-center` alone leaves the
+  wordmark visibly raised. In `em`, so one value corrects every size. Measured
+  afterwards: ink centre against mark centre is off by **0.2px at 34px and
+  0.1px at 28px**.
+
+`tracking-tight` was dropped from the lockups — negative tracking pulls a
+blocky pixel face into itself. The landing's positive tracking is kept.
+
+Footer credits are a different problem: they sit inline beside "© 2026" rather
+than beside a mark, so they scale in `em` (`text-[1.6em]` — Arcade's 0.444em
+cap against the body face's ~0.72em) with `translate-y-[0.22em]` to drop the
+ink onto the shared baseline, plus `inline-block`, because transforms do not
+apply to inline boxes.
+
+**Next**
+
+1. Resolve the licence before deploy, or swap the face. If it has to change,
+   it is one line in `lib/fonts.ts` plus the file — no call site moves.
+2. The face is a TTF (27KB). If it stays, converting to woff2 would roughly
+   halve it; `next/font/local` serves whatever it is given and does not
+   convert.
+3. The 0.11em nudge and the 44.4% cap ratio are properties of *this* face.
+   Both need re-measuring if it is ever swapped — they are not constants.

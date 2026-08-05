@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { MessageContent } from "@/components/message-content";
+import { UserMessageContent } from "@/components/user-message-content";
 import { CopyButton } from "@/components/copy-button";
 import { MAX_REPO_URL_LENGTH, parseGitHubRepoUrl } from "@/lib/github-repo";
 import { CONVERSATION_ID_RE, conversationLabel } from "@/lib/conversations";
@@ -1234,8 +1235,11 @@ export function ChatView({
                   }`}
                 >
                   {message.role === "user" && (
-                    <div className="max-w-[88%] rounded-2xl bg-accent px-4 py-2.5 text-[15px] leading-[1.6] text-accent-foreground sm:max-w-[75%]">
-                      <MessageContent content={message.content} />
+                    // Not MessageContent: the user's own text is rendered
+                    // literally, never parsed as markdown. See
+                    // components/user-message-content.tsx.
+                    <div className="max-w-[88%] min-w-0 rounded-2xl bg-accent px-4 py-2.5 text-[15px] leading-[1.6] text-accent-foreground sm:max-w-[75%]">
+                      <UserMessageContent content={message.content} />
                     </div>
                   )}
 

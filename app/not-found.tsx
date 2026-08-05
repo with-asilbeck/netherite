@@ -1,6 +1,5 @@
 import Image from "next/image";
 import Link from "next/link";
-import { inter } from "@/lib/fonts";
 
 /**
  * Root 404. Catches unmatched URLs across the whole app, and also renders for
@@ -14,7 +13,7 @@ import { inter } from "@/lib/fonts";
 export default function NotFound() {
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col bg-sidebar font-sans text-foreground`}
+      className="flex min-h-screen w-full flex-col bg-sidebar font-sans text-foreground"
     >
       <header className="flex w-full items-center px-6 py-7 sm:px-14">
         <Link href="/" className="flex items-center gap-3">
@@ -25,7 +24,7 @@ export default function NotFound() {
             height={34}
             className="h-[34px] w-[34px] object-contain dark:invert"
           />
-          <span className="text-lg font-semibold tracking-tight">
+          <span className="text-[34px] leading-none translate-y-[0.11em] font-brand">
             NETHERITE
           </span>
         </Link>
@@ -67,7 +66,7 @@ export default function NotFound() {
       </main>
 
       <footer className="border-t border-border px-6 py-8 text-xs text-muted-foreground sm:px-14">
-        © 2026 NETHERITE
+        © 2026 <span className="inline-block translate-y-[0.22em] text-[1.6em] leading-none font-brand">NETHERITE</span>
       </footer>
     </div>
   );

@@ -38,16 +38,35 @@ async function writeToClipboard(text: string): Promise<boolean> {
 }
 
 /**
+ * Where the button is sitting, which decides its colors. `code` is for the
+ * fenced-code surface, which is dark on *both* themes -- the default's
+ * `text-muted-foreground` is a mid stone brown that all but disappears on it.
+ *
+ * This is a prop rather than something the caller passes through `className`
+ * because both tones set `color`, and Tailwind resolves competing utilities
+ * by their order in the generated stylesheet, not by the order they appear in
+ * the class attribute. An override passed in would win or lose at random.
+ */
+type Tone = "default" | "code";
+
+const TONE_CLASSES: Record<Tone, string> = {
+  default: "text-muted-foreground hover:bg-muted hover:text-foreground",
+  code: "text-code-muted hover:bg-code-hover hover:text-code-foreground",
+};
+
+/**
  * Copies a message's text. Used under both sides of the chat transcript, so
  * it stays visually neutral and inherits its alignment from the parent.
  */
 export function CopyButton({
   text,
   label = "Copy message",
+  tone = "default",
   className = "",
 }: {
   text: string;
   label?: string;
+  tone?: Tone;
   className?: string;
 }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
@@ -79,7 +98,7 @@ export function CopyButton({
       // confirmation the checkmark gives everyone else.
       aria-label={copied ? "Copied" : state === "failed" ? "Couldn't copy" : label}
       title={copied ? "Copied" : label}
-      className={`flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${className}`}
+      className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${TONE_CLASSES[tone]} ${className}`}
     >
       {copied ? (
         <svg

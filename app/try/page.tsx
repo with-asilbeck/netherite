@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/server";
 import { CHAT_APP_PATH } from "@/lib/chat-entry";
 import { ChatView } from "@/app/chat/chat-view";
@@ -28,7 +27,7 @@ export default async function TryPage() {
 
   return (
     <div
-      className={`${inter.variable} flex h-screen w-full flex-col bg-background font-sans`}
+      className="flex h-screen w-full flex-col bg-background font-sans"
     >
       <header className="flex shrink-0 items-center px-6 py-5 sm:px-14">
         <Link href="/" className="flex items-center gap-3">
@@ -39,7 +38,7 @@ export default async function TryPage() {
             height={28}
             className="h-7 w-7 object-contain dark:invert"
           />
-          <span className="text-base font-semibold tracking-tight text-foreground">
+          <span className="text-[28px] text-foreground leading-none translate-y-[0.11em] font-brand">
             NETHERITE
           </span>
         </Link>

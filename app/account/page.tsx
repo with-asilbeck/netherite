@@ -7,7 +7,6 @@ import { formatDate, statusDescription } from "@/lib/billing/entitlement";
 import { customerPortalUrl } from "@/lib/billing/lemonsqueezy";
 import { formatPrice } from "@/lib/billing/plans";
 import { getOwnBilling } from "@/lib/billing/queries";
-import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/server";
 import { TIER_LABELS } from "@/lib/usage/tiers";
 
@@ -43,7 +42,7 @@ export default async function AccountPage() {
 
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col bg-background font-sans text-foreground`}
+      className="flex min-h-screen w-full flex-col bg-background font-sans text-foreground"
     >
       <header className="flex items-center justify-between border-b border-border px-6 py-7 sm:px-14">
         <Link href="/" className="flex items-center gap-3">
@@ -54,7 +53,7 @@ export default async function AccountPage() {
             height={34}
             className="h-[34px] w-[34px] object-contain dark:invert"
           />
-          <span className="text-lg font-semibold tracking-tight">NETHERITE</span>
+          <span className="text-[34px] leading-none translate-y-[0.11em] font-brand">NETHERITE</span>
         </Link>
         <Link
           href="/chat"
@@ -170,7 +169,7 @@ export default async function AccountPage() {
       </main>
 
       <footer className="border-t border-border px-6 py-8 text-xs text-muted-foreground sm:px-14">
-        © 2026 NETHERITE
+        © 2026 <span className="inline-block translate-y-[0.22em] text-[1.6em] leading-none font-brand">NETHERITE</span>
       </footer>
     </div>
   );

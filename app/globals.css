@@ -107,8 +107,11 @@
   --color-nether-cta-from: var(--nether-cta-from);
   --color-nether-cta-to: var(--nether-cta-to);
 
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--system-sans);
   --font-mono: var(--font-geist-mono);
+  /* The wordmark face. Declared on <html> by the root layout, so `font-brand`
+     works on every route — the brand name appears in almost all of them. */
+  --font-brand: var(--font-arcade);
   /* Landing-page faces. The variables are declared by next/font on the
      landing wrapper itself, so these utilities only resolve inside it. */
   --font-display: var(--font-space-grotesk);
@@ -130,6 +133,13 @@
   --color-sidebar: var(--sidebar);
   --color-code: var(--code);
   --color-code-foreground: var(--code-foreground);
+  /* Chrome on top of the code surface: the language label and the copy
+     button. These need their own tokens rather than `code-foreground/60`
+     -- alpha modifiers can't resolve through the two-level var indirection
+     (same limitation noted above --border-strong), so the dimming has to be
+     baked into the value. */
+  --color-code-muted: var(--code-muted);
+  --color-code-hover: var(--code-hover);
   --color-error-bg: var(--error-bg);
   --color-error-foreground: var(--error-foreground);
   --color-error-border: var(--error-border);
@@ -186,10 +196,56 @@
   --error-border: oklch(0.4 0.1 30);
 }
 
+/* Syntax highlighting for fenced code blocks (components/code-block.tsx).
+   These are the only theme tokens in this file with no `.dark` counterpart,
+   and that is deliberate: --code is already dark on BOTH themes (black-500
+   on light, jet_black-100 on dark), so a code block is light-on-dark either
+   way and one palette is correct for both. A second "light mode" set would
+   be a palette for a background that never renders.
+
+   Hues come from the brand rather than from a stock Prism theme: emerald and
+   violet are the landing accent pair, the warm khaki/amber steps come off the
+   neutral ramp. Every value clears 4.5:1 on both code backgrounds (measured,
+   lowest is `comment` at 5.7:1) and sits inside sRGB.
+
+   Plain code text is deliberately absent -- it inherits --code-foreground,
+   which already swaps per theme. */
+/* San Francisco.
+   Apple licenses SF for use on Apple platforms only — there is no webfont to
+   self-host and it is not on Google Fonts, so it is requested *by name*
+   through the system stack rather than downloaded. `-apple-system` and
+   `BlinkMacSystemFont` resolve to SF on macOS and iOS; everything after them
+   is the nearest platform equivalent (Segoe UI on Windows, Roboto on
+   Android), because on those platforms SF is simply not present.
+
+   Declared here as a plain custom property, and mapped into `--font-sans`
+   above, for the same reason the color tokens are: `body` below needs the
+   value too, and it can't reach into `@theme`. */
+:root {
+  --system-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --syntax-comment: oklch(0.63 0.018 75);
+  --syntax-keyword: oklch(0.76 0.13 300);
+  --syntax-string: oklch(0.8 0.14 165);
+  --syntax-number: oklch(0.84 0.1 75);
+  --syntax-function: oklch(0.85 0.07 200);
+  --syntax-operator: oklch(0.74 0.03 75);
+  --syntax-punctuation: oklch(0.68 0.025 75);
+  --syntax-alert: oklch(0.78 0.115 30);
+
+  --code-muted: oklch(0.66 0.02 75);
+  --code-hover: rgb(255 255 255 / 0.08);
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Was a hardcoded `Arial, Helvetica, sans-serif` left over from
+     create-next-app, which overrode the app's own face on anything that
+     didn't explicitly opt in with `font-sans`. */
+  font-family: var(--system-sans);
 }
 
 /* Tailwind's preflight no longer sets this by default. */

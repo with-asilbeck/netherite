@@ -4,7 +4,6 @@ import { Suspense, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { inter } from "@/lib/fonts";
 import { createClient } from "@/lib/supabase/client";
 import { GITHUB_OAUTH_SCOPES } from "@/lib/github/scopes";
 
@@ -104,7 +103,7 @@ function OAuthButtons() {
 export default function LoginPage() {
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col items-center bg-sidebar font-sans text-foreground`}
+      className="flex min-h-screen w-full flex-col items-center bg-sidebar font-sans text-foreground"
     >
       <header className="flex w-full items-center px-6 py-7 sm:px-14">
         <Link href="/" className="flex items-center gap-3">
@@ -115,7 +114,7 @@ export default function LoginPage() {
             height={34}
             className="h-[34px] w-[34px] object-contain dark:invert"
           />
-          <span className="text-lg font-semibold tracking-tight">
+          <span className="text-[34px] leading-none translate-y-[0.11em] font-brand">
             NETHERITE
           </span>
         </Link>

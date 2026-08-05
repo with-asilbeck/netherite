@@ -80,6 +80,12 @@ function baseConfig(
     maxOutputTokens: maxTokens,
     // Unlike Anthropic, Google still accepts sampling parameters, and the
     // triage stage genuinely wants the most deterministic verdict it can get.
+    //
+    // The advisor stream rides on this too, and depends on it just as much:
+    // it is what stops the same snippet being flagged differently on two
+    // submissions, which is the whole point of a user re-submitting a fix to
+    // check it. Do not raise this to make chat read more naturally — the
+    // variance lands on security verdicts, not on prose.
     temperature: 0,
     thinkingConfig: { thinkingLevel: THINKING[reasoning] },
     abortSignal: signal,

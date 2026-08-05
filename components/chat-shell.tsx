@@ -27,14 +27,22 @@ export function ChatShell({
 }: {
   sidebar: ReactNode;
   /**
-   * Top-right of the chat pane — currently the upgrade CTA. Passed in as a
-   * node rather than built here so the tier stays a server-side concern:
-   * this is a client component, and anything it computed about a plan would
-   * have to be handed to the browser first.
+   * The upgrade CTA. Passed in as a node rather than built here so the tier
+   * stays a server-side concern: this is a client component, and anything it
+   * computed about a plan would have to be handed to the browser first.
    *
-   * Rendered in two places, because the desktop and mobile headers are
-   * separate elements (the mobile one carries the menu button and the
-   * wordmark, and is `md:hidden`). Both are the same node.
+   * Rendered in two places with different placement, from the same node: in
+   * the mobile bar it sits inline after the wordmark, and on desktop it is
+   * floated centre-top over the transcript. The name is a leftover from when
+   * both were right-aligned in a header row.
+   *
+   * **The `headerRight &&` guards below depend on UpgradeButton staying a
+   * server component.** It returns `null` on pro and max, and because it is
+   * rendered on the server before crossing into this client component, what
+   * arrives here is `null` — so the guards short-circuit and the wrapper is
+   * never emitted. Add `"use client"` to it and this prop becomes a truthy
+   * React element that merely *renders* nothing, at which point pro and max
+   * users get an empty blurred pill floating over their transcript.
    */
   headerRight?: ReactNode;
   children: ReactNode;
@@ -118,25 +126,43 @@ export function ChatShell({
               shrink-0, and text in a flex child defaults to min-width:auto,
               which is how a header like this ends up scrolling sideways on
               a 320px screen. */}
-          <span className="min-w-0 truncate text-sm font-semibold tracking-tight">
+          <span className="text-[22px] min-w-0 truncate leading-none translate-y-[0.11em] font-brand">
             NETHERITE
           </span>
           {headerRight && <div className="ml-auto pl-3">{headerRight}</div>}
         </div>
 
-        {/* Desktop header. Deliberately a real row rather than a button
-            floated over the messages: the transcript scrolls the full height
-            of this pane, so an absolutely positioned control would have
-            message bubbles sliding underneath it. Borderless and only as
-            tall as its content, so it reads as part of the chat rather than
-            as a second toolbar under the sidebar's.
+        {/* Desktop upgrade CTA, floated centre-top over the transcript rather
+            than occupying a row of its own.
 
-            `pointer-events-none` on the row with it re-enabled on the child
-            keeps the empty strip from swallowing clicks meant for the
-            message area beneath it. */}
+            This was previously a real row, specifically so that nothing
+            scrolled underneath it. Floating it back reclaims that vertical
+            space and accepts the overlap: the transcript owns the full height
+            of this pane, so message bubbles now pass behind the button. It
+            stays readable because it is opaque (`bg-foreground`) and sits
+            above them — the trade is that a bubble can be briefly occluded
+            mid-scroll, which is a deliberate choice, not an oversight.
+
+            The blur is a pill around the button, not a strip across the pane:
+            a full-width bar would be the header block again in everything but
+            name. It exists because the button is opaque and would otherwise
+            butt straight up against a line of text mid-sentence — the halo
+            gives it an edge to sit on without reserving any layout height.
+
+            `backdrop-blur` rather than a translucent fill: an alpha modifier
+            on a semantic colour (`bg-background/80`) silently resolves to a
+            solid here, because those tokens go through two levels of var
+            indirection — the same limitation noted above --border-strong in
+            globals.css. Blur needs no colour at all.
+
+            `pointer-events-none` on the positioned layer, re-enabled on the
+            button, keeps the rest of the top edge clickable — without it the
+            full-width layer would swallow clicks meant for the messages. */}
         {headerRight && (
-          <div className="pointer-events-none hidden justify-end px-4 pt-3 md:flex">
-            <div className="pointer-events-auto">{headerRight}</div>
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 hidden justify-center pt-3 md:flex">
+            <div className="pointer-events-auto rounded-full p-1 backdrop-blur-md">
+              {headerRight}
+            </div>
           </div>
         )}
 

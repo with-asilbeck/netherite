@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 
-import { inter } from "@/lib/fonts";
 
 /**
  * PLACEHOLDER — same reason as the cookie page: nothing in the codebase
@@ -84,7 +83,7 @@ function Section({
 export default function AboutPage() {
   return (
     <div
-      className={`${inter.variable} flex min-h-screen w-full flex-col bg-background font-sans text-foreground`}
+      className="flex min-h-screen w-full flex-col bg-background font-sans text-foreground"
     >
       <header className="flex items-center justify-between border-b border-border px-6 py-7 sm:px-14">
         <Link href="/" className="flex items-center gap-3">
@@ -95,7 +94,7 @@ export default function AboutPage() {
             height={34}
             className="h-[34px] w-[34px] object-contain dark:invert"
           />
-          <span className="text-lg font-semibold tracking-tight">NETHERITE</span>
+          <span className="text-[34px] leading-none translate-y-[0.11em] font-brand">NETHERITE</span>
         </Link>
         <Link
           href="/"
@@ -197,7 +196,7 @@ export default function AboutPage() {
       </main>
 
       <footer className="border-t border-border px-6 py-8 text-xs text-muted-foreground sm:px-14">
-        © 2026 NETHERITE
+        © 2026 <span className="inline-block translate-y-[0.22em] text-[1.6em] leading-none font-brand">NETHERITE</span>
       </footer>
     </div>
   );
