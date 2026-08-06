@@ -19,6 +19,7 @@
 
 import type { BillingTables } from "./billing-schema";
 import type { GitHubTables } from "./github-schema";
+import type { PrivateScanTables } from "./private-scan-schema";
 import type { ActionType, Tier } from "@/lib/usage/tiers";
 
 export type UsageEventRow = {
@@ -54,7 +55,8 @@ export type UsageDatabase = {
         Relationships: [];
       };
     } & BillingTables &
-      GitHubTables;
+      GitHubTables &
+      PrivateScanTables;
     Views: Record<never, never>;
     Functions: {
       reserve_usage: {

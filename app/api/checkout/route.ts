@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createCheckoutUrl } from "@/lib/billing/lemonsqueezy";
 import { isBillingPeriod, isPaidTier } from "@/lib/billing/plans";
 import { checkCheckoutRateLimit } from "@/lib/rate-limit";
+import { isSameOrigin } from "@/lib/same-origin";
 
 // Starts a Lemon Squeezy hosted checkout for the signed-in user.
 //
@@ -104,31 +105,6 @@ export async function POST(request: Request) {
  * with our store's branding on it. `NEXT_PUBLIC_SITE_URL` is the
  * deployment's own origin; the request URL is the local-dev fallback.
  */
-/**
- * True when the request came from this site's own pages.
- *
- * Browsers set `Origin` on every cross-origin POST and cannot be talked out
- * of it, so a missing header means a non-browser client (curl, a server) —
- * which has no ambient cookies to abuse and is therefore not the thing CSRF
- * is about. A *present* header that doesn't match is refused.
- */
-function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-
-  const allowed = new Set<string>();
-  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (configured) {
-    try {
-      allowed.add(new URL(configured).origin);
-    } catch {
-      /* misconfigured; the request origin below still applies */
-    }
-  }
-  allowed.add(new URL(request.url).origin);
-
-  return allowed.has(origin);
-}
 
 function successUrl(request: Request): string {
   const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim();

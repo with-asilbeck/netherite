@@ -1,5 +1,344 @@
 # Progress
 
+## 2026-08-07 — Private repository scanning via GitHub App
+
+Paid accounts can install a GitHub App and scan repositories that aren't
+public. The credential that makes that possible is minted per scan, scoped to
+one repository, and revoked when the scan drains — it is never stored.
+
+**Two things in the specification turned out to be wrong, and both were
+changed rather than implemented as written.**
+
+1. **Anthropic's API retention is 30 days, not 7.** The spec said 7. The
+   privacy centre says inputs and outputs are deleted "within 30 days of
+   receipt or generation", with named exceptions (Files API, an agreed
+   zero-retention arrangement, Usage Policy enforcement, legal compliance).
+   Understating a retention period on a consent screen makes the whole screen
+   worthless, so the consent copy states 30 and the test suite asserts the
+   string "7 days" never appears.
+
+2. **Google's terms depend entirely on whether the API key is billed, and
+   this deployment appears to be on the free tier.** On the paid tier Google
+   does not use prompts or responses to improve its products. On the *unpaid*
+   tier it does, and states that human reviewers may read, annotate and
+   process API input and output. This project's own notes record hitting
+   Gemini's 5-requests-per-minute / 20-per-day free limits, which is the free
+   tier. Sending someone's private source code to that endpoint under a
+   screen promising confidentiality would be the single worst thing this
+   feature could do, so `GEMINI_BILLING_TIER` (default `unpaid`) selects
+   which set of clauses the consent screen shows, and the unpaid ones are
+   rendered as warnings. **Set it to `paid` only after enabling billing on
+   the Gemini key — and consider doing that before enabling this feature for
+   real customers.**
+
+**The credential.** `lib/github/app.ts` signs an App JWT locally, exchanges it
+for an installation token, and hands back an object whose only accessor is
+`use()`. Three rules, all structural rather than conventional:
+
+- **Never in argv.** `-c http.extraHeader=…` is what every example shows, and
+  `/proc/<pid>/cmdline` is world-readable on Linux — any process on the box
+  could read the token mid-clone. It goes through `GIT_CONFIG_COUNT` /
+  `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` instead.
+- **Never in the URL.** `https://x-access-token:TOKEN@github.com/…` puts it in
+  argv *and* in git's error text, and git writes remote URLs into
+  `.git/config` — i.e. the token would land on disk inside the clone.
+- **Scoped to one URL prefix**, `http.https://github.com/.extraHeader`. Git
+  only sends a URL-matched header to URLs under that prefix, so a redirect to
+  another host would not carry it. The bare key would.
+
+It is also minted twice on purpose: a token cannot be narrowed to a repository
+without that repository's id, and the id needs a token to look up. So an
+installation-wide token resolves the repo and is revoked immediately, then a
+token scoped to that one repository id does the clone. An installation may
+cover ninety repositories; the clone credential can read one.
+
+**The gate is four independent conditions** — tier, installation, consent, and
+what GitHub itself says — and the first three are a pure function,
+`decidePrivateScanAccess`, for the same reason `decideRepoAccess` is: rules
+that need three database rows to exercise get exercised once. All eight
+combinations are asserted; exactly one grants.
+
+**Ownership binding.** The install callback does not trust `installation_id`
+— it is an integer in a query string. It asks GitHub who the installation
+belongs to and compares against the GitHub account the user has already proven
+they control via OAuth, on the immutable numeric account id rather than the
+renameable login. Without that, user A could complete the callback carrying
+user B's installation id and mint clone credentials for B's private
+repositories indefinitely. A unique index on `installation_id` is the second
+lock. Organization installations are refused outright for now: proving a user
+may act for an org needs a membership check this app doesn't make, and
+guessing wrong grants one employee read access to everything their employer
+owns.
+
+**Cleanup.** Already in a `finally` in the pipeline; strengthened. The old
+`cleanup` swallowed deletion errors, which was fine when every clone was
+public code already on the internet. It now retries once and logs loudly —
+"the working copy could not be deleted" is the most important line an operator
+could get, and it must not be the one that gets discarded.
+
+**Security review found three issues, all fixed.**
+
+- **CSRF on the consent endpoint.** The one state change in this feature whose
+  whole purpose is recording that a human read something and agreed, and it
+  had no origin check — while `/api/checkout` next door has had one all along.
+  Supabase's `SameSite=Lax` cookies do stop it in practice, but a form POST
+  with `enctype="text/plain"` is a simple request that `request.json()` parses
+  happily, so this was not theoretical. `isSameOrigin` moved out of the
+  checkout route into `lib/same-origin.ts` — two definitions of "is this
+  request from us" is one too many.
+- **No rate limit on the consent write or the install callback.** The callback
+  costs two authenticated GitHub calls per hit against the App's quota, which
+  every customer of the deployment shares.
+- **`STATUS_MESSAGES[status]` with `status` from the query string** reached up
+  the prototype chain (`?private_scan=constructor`). Harmless as rendered, and
+  a shape not worth having. `Object.hasOwn` now.
+
+**Verified — 102 assertions, `npm run verify:private-scan`, offline.** The
+three properties asked for: the token never persisted (no column in the
+migration, no field in the schema types, no mention in the store, and only
+three modules ever unwrap it); consent unbypassable (all eight gate
+combinations, stale-version rejection, `accepted === true` not merely truthy,
+the version echoed back must match, plus the CSRF and rate-limit guards); and
+cleanup on every path (a real failed clone leaves zero `netherite-scan-*`
+directories behind). The credential assertions run against the actual argv
+array and environment entries handed to `spawn`, not against a reading of the
+source. `tsc --noEmit`, `eslint`, `next build` clean; `verify:fix-prompt`
+(73) and `verify:tiers` (148) still pass.
+
+**Not yet done — the live test needs two things only the operator can do.**
+
+1. **Apply the migration.** `20260807000000_private_repo_scanning.sql` has not
+   been run; there is still no `supabase` CLI link in this environment, so it
+   goes through the SQL editor like the others.
+2. **Install the App.** `netherite-security-specialist` currently has zero
+   installations — confirmed by authenticating as the App and calling
+   `GET /app/installations`. Install it on a private repository, then run
+   `npm run verify:private-scan:live`, which clones for real and then audits
+   the machine: no working copy in tmp, no token in `.git/config`, no
+   fragment of the private code in any file under tmp or the project, and the
+   credential dead (401) after revocation.
+
+**Fixed on the way in:** `GITHUB_PRIVATE_KEY` in `.env.local` was a 27-line
+unquoted PEM, so dotenv read it only as far as the first newline and the app
+saw a 31-character string. Wrapped in double quotes (the only change made to
+that file). `readAppPrivateKey` now rejects that shape with a message naming
+the fix, and accepts `\n`-escaped, CRLF, and base64 (`GITHUB_PRIVATE_KEY_B64`,
+which is what Vercel's environment UI wants).
+
+## 2026-08-06 — The fix-prompt button moves out from under the hover
+
+Reported as "I see no fix prompt button". It was there, and it was hidden by
+its own placement: it sat in the code block's header strip, which is
+`sm:opacity-0` and reveals on hover from `sm` up. On a desktop that meant the
+only route to the feature was invisible until the pointer happened to cross
+one specific code block. Hover-to-reveal is fine for a duplicate of something
+obvious — the copy icon — and wrong for the only way to reach a feature.
+
+**Now: a footer under the code, always visible.** `components/code-block.tsx`
+renders a strip below the highlighted source when `fixPrompt` is set, holding
+the button and the line *"Hand this fix to your coding agent"*. The text is
+not decoration — "copy" on a code block reads as "copy the code", and this
+button copies something else entirely. A block with no fix prompt renders
+exactly as before, with no footer at all. The plain copy icon stays in the
+header, still hover-revealed, unchanged.
+
+**The prominent tone is built from `--code-*`, not `--accent`, and that is the
+whole design decision.** The obvious move was a filled accent button. It would
+have made things worse in light mode: `--accent` is `#5e503f` there, and the
+code surface is `#0a0908` on *both* themes — a dark brown chip on near-black,
+about 2.6:1, i.e. less visible than the muted button it replaced. `--code-muted`
+and `--code-hover` are single values picked for this dark surface, so the
+outlined chip holds up either way. Measured in the browser rather than argued:
+**17.4:1 dark, 18.9:1 light.** Hover inverts it to a solid fill.
+
+**Verified — 86 checks in a real browser**, desktop and Pixel 7, light and
+dark, driving the real fixtures through the real `MessageContent`. Every
+fix-prompt button visible at rest with the pointer parked in the corner
+(effective opacity 1, not merely "rendered"), positioned below the `pre` and
+inside the block, no viewport overflow at 412px. Per-fixture counts match what
+the parser suite asserts: 1/1/1 for the two single findings and the advisor
+reply, 2 for the plain report, 1 for the structured one, **0 for the
+findings-free one**. The clipboard still round-trips the prompt, and the copy
+still confirms visually, in the accessible name, and through the `aria-live`
+region. `npm run verify:fix-prompt` still 73/73, `tsc --noEmit`, `eslint` and
+`next build` clean. Harness route deleted; the build output confirms it is
+gone.
+
+Three of those checks failed on the first run and all three were the test's
+fault, recorded because the second one is a trap worth knowing:
+
+- Expected 4 buttons, found 6. The expectation was wrong — six is the correct
+  total across the six fixtures.
+- "Button confirms the copy" failed while the copy itself passed. The locator
+  was `getByRole("button", { name: /copy fix prompt/i })`, and clicking flips
+  the accessible name to "Fix prompt copied" — so the assertion was reading
+  the *next* unclicked button. Any by-name locator over a button whose label
+  changes on click has this bug. Held by element handle now.
+- Hover did nothing on the Pixel 7 context. Correct: a touch device has no
+  `:hover`, which is the entire reason the button must not need one.
+
+**Still true and worth repeating:** a report with no findings has no fix code
+block, so it shows no button — by construction, not by failure. That is what
+the original report turned out to be.
+
+## 2026-08-05 — Scan reports stop emitting raw HTML
+
+The Pro/Max report was rendering `<details> <summary>Files flagged in
+triage</summary>` into the chat as literal text, tags and all.
+
+`renderStructuredMarkdown` wrapped that list in a `<details>` disclosure, which
+works when the markdown is exported to GitHub and nowhere else:
+`components/message-content.tsx` renders through react-markdown, which does
+not pass raw HTML through — by design. It was the only place in the codebase
+emitting HTML into markdown, so nothing else was affected, and only the two
+tiers that get the structured renderer ever saw it.
+
+**Fixed by dropping the HTML, not by rendering it.** `### Files flagged in
+triage` and the same list, which is how the plain renderer has always shown
+it. Enabling raw HTML (`rehype-raw`) to get the disclosure back would be the
+wrong trade in this app specifically: the report quotes paths and model output
+derived from an untrusted repository, so it would hand that repository a way
+to inject markup into the page. The list loses collapsibility and is short
+enough that this reads better open.
+
+Verified in the browser against the exact content from the bug report,
+rendered through the real `MessageContent` in the real chat bubble: the tags
+are gone, the summary is a real `h3`, both entries survive as list items and
+the paths still render as inline code. The before/after were rendered side by
+side so the reproduction was confirmed, not assumed. `tsc --noEmit`, `eslint`
+and `next build` clean; the harness route was deleted afterwards.
+
+---
+
+## 2026-08-05 — "Copy fix prompt" on every finding
+
+A finding's fix code block now carries a second button that copies the finding
+as an instruction for somebody else's coding agent, next to the plain
+code-copy button rather than instead of it. The two copy different things and
+both are wanted: one for pasting into an editor, one for pasting into Claude
+Code, Codex, Cursor, Copilot, Gemini CLI, Windsurf or Aider.
+
+What lands on the clipboard:
+
+```
+Fix a security issue in app/api/profiles/route.js (line 10). Read AGENTS.md
+(or your project's equivalent conventions file) first if one exists.
+
+Issue: <the finding's own risk sentence, verbatim>
+
+Fix: <the finding's own words about the fix>
+
+```js
+<the corrected code>
+```
+
+After fixing, show me the corrected code — don't just confirm it's done.
+```
+
+**AGENTS.md, not CLAUDE.md.** The copied text has no idea which tool it is
+about to be pasted into, and AGENTS.md is the file every major agent reads
+natively. CLAUDE.md would be right for exactly one of them. Hedged with "or
+your project's equivalent" so it still reads sensibly in a repo without one.
+
+**No model call, and no new data.** `lib/fix-prompt.ts` repackages what the
+finding already says. Every sentence in the output is either lifted verbatim
+from the finding or is fixed boilerplate from that file — nothing paraphrases
+a risk or invents a fix. The report format is untouched; this is additive.
+
+**It reads markdown, because markdown is the only form a finding has by the
+time it reaches the browser.** Nothing hands the client a structured finding:
+the deep scan returns a markdown report per file, the renderers concatenate
+them, the advisor writes markdown directly, and all three arrive as
+`message.content`. So the parser reads the labels the prompts pin
+(`**Risk:**`, `**Fix:**`, the structured format's `| **Location** |` row) and
+falls back to content matching for free-form advisor replies.
+
+Four decisions in there worth keeping:
+
+- **A code block is only a fix if the prose says so.** With a `**Fix:**` label
+  that is settled. Without one, the lead-in has to carry a cue (`fix`,
+  `corrected`, `instead`, `parameterized`, …), and the section heading counts
+  — `### How to Fix It` is the cue and the paragraph under it often isn't.
+  This is what keeps the button off the *vulnerable* code an advisor quotes
+  back before showing the fix, which is the one wrong answer this can give.
+  A real reply verified against exactly that shape.
+- **The risk survives a heading; the labelled formats never need that.** A
+  real advisor reply states the IDOR up top, explains it under `### The Risk`
+  and only reaches the code under `### How to Fix It`. Section-scoped state
+  alone produced no button for it.
+- **Plain-English risk sentences are matched, not just jargon.**
+  `vuln-report-format` asks for no unexplained jargon, so a good risk sentence
+  contains none of the words you would grep for: "any signed-in customer can
+  read anyone else's order" is a textbook IDOR that never says IDOR. Matching
+  only the vocabulary would have missed exactly the findings the format is
+  meant to produce.
+- **No path, no clause** — `Fix a security issue. Read AGENTS.md…`. A pasted
+  snippet has no file context, and a guessed path is worse than none because
+  the agent would go and edit whatever was guessed.
+
+Blocks are joined back to their prompt by **source offset**, not by their
+code. A report can legitimately contain the same corrected code twice — the
+same missing auth check fixed the same way in two routes — and only the offset
+tells those apart so each carries its own path. Code is the fallback for a
+tree with no positions.
+
+`components/copy-button.tsx` grew a second export rather than a second
+clipboard: both buttons now share one `useCopy` hook, so the secure-context
+fallback, the unmount timer and the `aria-live` confirmation have one
+definition. The new one is labelled rather than icon-only — "this copies a
+paragraph of instructions addressed to a different program" is not a
+universally understood glyph, and a second unlabelled icon reads as a
+duplicate of the first.
+
+**Verified.** `npm run verify:fix-prompt` — 63 assertions against the real
+modules, including `scripts/fixtures/`, which holds three *unedited* model
+outputs: the plain and structured deep-scan formats from running
+`lib/repo-scan/deep-scan.ts` over a vulnerable route, and an advisor reply to
+a pasted snippet through `lib/llm`. Hand-written markdown tests what the
+format specifies; those test what the models actually write, which is not the
+same thing — two of the four decisions above exist because a real output
+disagreed with a hand-written fixture.
+
+Then the same three rendered in the real chat markup and driven by Playwright:
+22 checks. Three of four blocks get the button and the fourth (a
+defence-in-depth RLS policy, not the fix) does not; the plain button still
+copies the code byte-for-byte with no label, no prompt text and no trailing
+newline; the clipboard round-trips both prompt shapes; both buttons reveal
+together on hover and stay visible on touch; both fit the header strip at
+360px; no console errors. `tsc --noEmit`, `npm run lint` and `next build` all
+clean. The harness route was deleted afterwards.
+
+**Followed up: "the button doesn't appear on repo-scan reports."** It does —
+what it cannot do is appear on a report with no findings, because the button
+lives on the fix code block and a findings-free report has none. Verified
+rather than argued: `scripts/fixtures/` gained three whole reports (real
+`scanRepository` output against a real repo, with the real per-file findings
+spliced where the renderers place them), and the suite now asserts 2 buttons
+on a plain report with two findings, 1 on a structured one, and 0 on a
+findings-free one. Those cases render in the real chat markup with the right
+paths and clipboard contents. The earlier tests only ever exercised a single
+finding, which is how a whole-report regression could have hidden.
+
+Worth knowing for the next scan test: the Gemini free tier is **5 requests a
+minute and 20 a day**, and a 125-file repo spends the daily allowance in one
+scan — every call 429s, the budget's `creditsExhausted` short-circuits the
+rest, and the report comes back `failed` with zero findings. Scan something
+tiny, or expect a report that says nothing.
+
+**Next**
+
+1. A finding whose fix is prose with no code block gets no button, because
+   there is no block for it to sit on. Rare in the labelled formats, which
+   specify a code block, and not worth a second button placement until a real
+   report shows it.
+2. Found while testing, not fixed, because it is neither new nor this
+   feature's: a long **inline** `` `code` `` span does not wrap and pushes the
+   page sideways at 360px — the structured format's `**Detail:**` line, which
+   quotes an example request, triggers it. One class on the `code` renderer in
+   `components/message-content.tsx` (`break-words`) closes it.
+
+---
+
 ## 2026-08-01 — One tier resolver
 
 `lib/get-user-tier.ts` is now the only place a user's tier is worked out.

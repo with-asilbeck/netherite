@@ -34,6 +34,14 @@ export type Entitlement = {
   exploitAnalysis: boolean;
   /** Scans are admitted ahead of free and basic. */
   priorityQueue: boolean;
+  /**
+   * May scan private repositories through the GitHub App installation.
+   *
+   * Read by the scan route *and* by the account page, so the entry point and
+   * the enforcement agree by construction — a free user is not shown an
+   * "Enable private repo scanning" panel that the server would then refuse.
+   */
+  privateRepoScanning: boolean;
 };
 
 export function entitlementFor(tier: Tier): Entitlement {
@@ -45,6 +53,7 @@ export function entitlementFor(tier: Tier): Entitlement {
     structuredReport: hasFeature(tier, "vulnerability_report"),
     exploitAnalysis: hasFeature(tier, "deep_exploit_analysis"),
     priorityQueue: hasFeature(tier, "priority_queue"),
+    privateRepoScanning: hasFeature(tier, "private_repo_scanning"),
   };
 }
 

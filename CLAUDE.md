@@ -92,6 +92,34 @@ in their code — with a focus on AI-generated ("vibe coded") apps.
   `404 … no longer available to new users` from `generateContent`. Make a real
   one-token call with the project's own key.
 
+## Private repository scanning
+
+- Paid tiers only (`private_repo_scanning` in `lib/tiers.ts`). The account
+  page does not render the panel for free accounts at all.
+- Access is a **GitHub App installation**, never an OAuth `repo` token. Env:
+  `GITHUB_APP_ID` and `GITHUB_PRIVATE_KEY` (or `GITHUB_PRIVATE_KEY_B64`).
+  A multi-line PEM in `.env.local` **must be wrapped in double quotes** —
+  dotenv reads an unquoted one only as far as its first newline, which yields
+  a 31-character "key" and a signing error much later.
+- **Installation tokens are never persisted.** Minted per scan in
+  `lib/github/app.ts`, scoped to the one repository being cloned, revoked when
+  the scan drains. There is no column anywhere that could hold one.
+- The clone credential goes to git through `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`
+  as a URL-scoped `http.https://github.com/.extraHeader`, never `-c` (argv is
+  world-readable) and never in the URL (git writes remote URLs to disk).
+- Four gates, all server-side: tier, installation, consent, and GitHub's own
+  answer. `lib/private-scan/authorize.ts`; the rules are the pure
+  `decidePrivateScanAccess`.
+- **`GEMINI_BILLING_TIER`** (`paid` | `unpaid`, default `unpaid`) decides what
+  the consent screen tells users about Google's data use, because Google's
+  terms differ completely between tiers — on the unpaid tier Google uses
+  submitted content to improve its products and human reviewers may read it.
+  Set it to `paid` only once billing is actually enabled on the API key.
+- Every private scan writes a `private_scan_audit` row *before* the clone; a
+  failed audit write aborts the scan.
+- Verify with `npm run verify:private-scan` (offline) and
+  `npm run verify:private-scan:live` (needs the App installed).
+
 ## Core features (build in this order)
 
 1. Code snippet analysis — user pastes code, gets vulnerability + fix

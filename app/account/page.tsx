@@ -3,10 +3,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { PrivateScanPanel } from "@/components/private-scan-panel";
 import { formatDate, statusDescription } from "@/lib/billing/entitlement";
 import { customerPortalUrl } from "@/lib/billing/lemonsqueezy";
 import { formatPrice } from "@/lib/billing/plans";
 import { getOwnBilling } from "@/lib/billing/queries";
+import { getUserEntitlement } from "@/lib/get-user-tier";
+import {
+  CONSENT_CHECKBOX_LABEL,
+  consentClauses,
+  PRIVATE_SCAN_CONSENT_VERSION,
+} from "@/lib/private-scan/consent";
+import { getConsent, getInstallation } from "@/lib/private-scan/store";
 import { createClient } from "@/lib/supabase/server";
 import { TIER_LABELS } from "@/lib/usage/tiers";
 
@@ -19,7 +27,11 @@ export const metadata: Metadata = {
 // page must never be served from a cache.
 export const dynamic = "force-dynamic";
 
-export default async function AccountPage() {
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ private_scan?: string }>;
+}) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -39,6 +51,31 @@ export default async function AccountPage() {
   const portalUrl = subscription?.lemonsqueezy_subscription_id
     ? await customerPortalUrl(subscription.lemonsqueezy_subscription_id)
     : null;
+
+  // The private-scanning panel is gated here, on the server, by the same flag
+  // the scan route enforces. A free account does not render the component at
+  // all — the entry point cannot be revealed by editing client state, because
+  // it was never sent. The installation row is only read when the flag is on,
+  // so a free account costs no extra query.
+  const entitlement = await getUserEntitlement(user.id);
+  const privateScanStatus = (await searchParams).private_scan ?? null;
+
+  const [installation, storedConsent] = entitlement.privateRepoScanning
+    ? await Promise.all([getInstallation(user.id), getConsent(user.id)])
+    : [null, null];
+
+  // Assembled server-side so the panel renders in its final state and so the
+  // "have they consented" answer comes from the same read the scan route
+  // makes — see the note on the component.
+  const consentState = {
+    version: PRIVATE_SCAN_CONSENT_VERSION,
+    clauses: consentClauses(),
+    checkboxLabel: CONSENT_CHECKBOX_LABEL,
+    granted:
+      storedConsent !== null && storedConsent.consentVersion >= PRIVATE_SCAN_CONSENT_VERSION,
+    grantedAt: storedConsent?.consentGivenAt ?? null,
+    grantedVersion: storedConsent?.consentVersion ?? null,
+  };
 
   return (
     <div
@@ -125,6 +162,15 @@ export default async function AccountPage() {
             </Link>
           </p>
         </section>
+
+        {entitlement.privateRepoScanning && (
+          <PrivateScanPanel
+            installed={installation !== null}
+            accountLogin={installation?.accountLogin ?? null}
+            status={privateScanStatus}
+            consent={consentState}
+          />
+        )}
 
         <section className="mt-10">
           <h2 className="text-sm font-semibold">Billing history</h2>

@@ -1,8 +1,10 @@
 import type { Element, ElementContent } from "hast";
+import type { ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { CodeBlock } from "@/components/code-block";
+import { indexFixPrompts, type FixPromptIndex } from "@/lib/fix-prompt";
 
 /** Flattens a hast subtree back to the source text it was built from. */
 function nodeText(node: ElementContent): string {
@@ -26,6 +28,53 @@ function fenceLanguage(node: Element): string | undefined {
     if (entry.startsWith("language-")) return entry.slice("language-".length);
   }
   return undefined;
+}
+
+/**
+ * Finds the prompt built for this block, if it is a finding's fix.
+ *
+ * By source offset first, because a report can legitimately contain the same
+ * corrected code twice — the same missing auth check fixed the same way in two
+ * routes — and only the offset tells those two apart so each carries its own
+ * file path. The code itself is the fallback for the case where the parsed
+ * tree comes back without positions.
+ */
+function fixPromptFor(node: Element | undefined, code: string, index: FixPromptIndex | null) {
+  if (!index) return undefined;
+  const offset = node?.position?.start?.offset;
+  if (offset !== undefined) {
+    const byOffset = index.byOffset.get(offset);
+    if (byOffset) return byOffset;
+  }
+  return index.byCode.get(code);
+}
+
+function renderPre(
+  node: Element | undefined,
+  children: ReactNode,
+  index: FixPromptIndex | null,
+) {
+  const child = node?.children[0];
+
+  if (child?.type === "element" && child.tagName === "code") {
+    // The trailing newline is an artifact of how the fence is parsed, not
+    // part of the code -- strip it so it doesn't ride along to the clipboard
+    // as a stray blank line.
+    const code = nodeText(child).replace(/\n$/, "");
+    return (
+      <CodeBlock
+        code={code}
+        language={fenceLanguage(child)}
+        fixPrompt={fixPromptFor(node, code, index)}
+      />
+    );
+  }
+
+  return (
+    <pre className="mb-3 overflow-x-auto rounded-lg bg-code p-3 font-mono text-[13px] text-code-foreground last:mb-0 [&>code]:rounded-none [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit">
+      {children}
+    </pre>
+  );
 }
 
 const markdownComponents: Components = {
@@ -81,27 +130,9 @@ const markdownComponents: Components = {
   // prop in v9, and keying off "does it have a language class" would demote an
   // unlabelled ``` block to an inline span. `pre` wrapping `code` is exactly
   // the shape markdown gives a fenced block, and nothing else.
-  pre: ({ node, children }) => {
-    const child = node?.children[0];
-
-    if (child?.type === "element" && child.tagName === "code") {
-      return (
-        <CodeBlock
-          // The trailing newline is an artifact of how the fence is parsed,
-          // not part of the code -- strip it so it doesn't ride along to the
-          // clipboard as a stray blank line.
-          code={nodeText(child).replace(/\n$/, "")}
-          language={fenceLanguage(child)}
-        />
-      );
-    }
-
-    return (
-      <pre className="mb-3 overflow-x-auto rounded-lg bg-code p-3 font-mono text-[13px] text-code-foreground last:mb-0 [&>code]:rounded-none [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit">
-        {children}
-      </pre>
-    );
-  },
+  //
+  // Replaced per message when the message contains findings — see `preWith`.
+  pre: ({ node, children }) => renderPre(node, children, null),
   hr: () => <hr className="my-4 border-border" />,
   table: ({ children }) => (
     <div className="mb-3 overflow-x-auto last:mb-0">
@@ -126,8 +157,23 @@ const markdownComponents: Components = {
 // number off a line starting `1997.`. They render literally, via
 // components/user-message-content.tsx.
 export function MessageContent({ content }: { content: string }) {
+  // Read straight from the markdown, because the markdown is the only form
+  // the finding exists in by the time it reaches the browser — see
+  // lib/fix-prompt.ts. Null for anything with no findings in it, which is
+  // most messages, and those render through the shared component map exactly
+  // as they did before this existed.
+  //
+  // Not memoized: `content` changes on every streamed token, so a memo would
+  // miss every time and only add a comparison. The scan is one linear pass
+  // over a string react-markdown is already re-parsing on the same render.
+  const fixPrompts = indexFixPrompts(content);
+
+  const components: Components = fixPrompts
+    ? { ...markdownComponents, pre: ({ node, children }) => renderPre(node, children, fixPrompts) }
+    : markdownComponents;
+
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
       {content}
     </ReactMarkdown>
   );

@@ -42,6 +42,13 @@ export type GitHubUser = {
 };
 
 export type GitHubRepo = {
+  /**
+   * GitHub's numeric repository id. Used to narrow an installation access
+   * token to this one repository — see createInstallationToken. Nullable
+   * because a response without it must not silently become a token scoped to
+   * repository 0.
+   */
+  id: number | null;
   full_name: string;
   private: boolean;
   /**
@@ -160,6 +167,7 @@ export async function fetchGitHubRepo(
   return {
     ok: true,
     data: {
+      id: typeof body.id === "number" && Number.isFinite(body.id) ? body.id : null,
       full_name: body.full_name,
       private: Boolean(body.private),
       size: typeof body.size === "number" && Number.isFinite(body.size) ? body.size : null,

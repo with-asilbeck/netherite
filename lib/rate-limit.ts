@@ -139,3 +139,27 @@ const checkoutLimiter = new FixedWindowLimiter(HOUR_MS, 20, MAX_TRACKED_KEYS, CL
 export function checkCheckoutRateLimit(userId: string): RateLimitResult {
   return checkoutLimiter.check(userId);
 }
+
+// Recording consent for private repository scanning. A consent row is a
+// record that a person read something and agreed; one account has no reason
+// to produce more than a handful in an hour, and capping it bounds both
+// database churn and the usefulness of grinding at the endpoint.
+const consentLimiter = new FixedWindowLimiter(HOUR_MS, 20, MAX_TRACKED_KEYS, CLEANUP_INTERVAL_MS);
+
+export function checkConsentRateLimit(userId: string): RateLimitResult {
+  return consentLimiter.check(userId);
+}
+
+// The GitHub App install callback. Every hit costs two authenticated GitHub
+// API calls, and the App's own rate limit is shared by every customer — so an
+// account replaying the callback could degrade private scanning for everyone.
+const githubAppCallbackLimiter = new FixedWindowLimiter(
+  HOUR_MS,
+  30,
+  MAX_TRACKED_KEYS,
+  CLEANUP_INTERVAL_MS,
+);
+
+export function checkGitHubAppCallbackRateLimit(userId: string): RateLimitResult {
+  return githubAppCallbackLimiter.check(userId);
+}

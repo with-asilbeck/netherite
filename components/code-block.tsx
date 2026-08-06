@@ -14,7 +14,7 @@ import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
 import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
 import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 
-import { CopyButton } from "@/components/copy-button";
+import { CopyButton, CopyFixPromptButton } from "@/components/copy-button";
 
 /**
  * `prism-light` registers nothing by default -- every grammar is opt-in, which
@@ -170,20 +170,32 @@ const PRE_STYLE: CSSProperties = {
 };
 
 /**
- * One fenced code block: a header strip carrying the language and a copy
- * button, over the highlighted source.
+ * One fenced code block: a header strip carrying the language and the copy
+ * buttons, over the highlighted source.
+ *
+ * `fixPrompt` is set only when this block is the **Fix:** of a finding, and
+ * message-content.tsx decides that — the block itself has no idea what it is
+ * part of. When it is set, a footer appears under the code with a button that
+ * copies the finding as an instruction for a coding agent instead of copying
+ * the code. That footer is deliberately *not* in the header strip, which is
+ * hidden until hover from `sm` up; a block with no fix prompt renders exactly
+ * as it did before, with no footer at all.
  *
  * Memoized because the chat streams. Without it, every token appended to a
  * reply re-tokenizes *every* code block already rendered in that message, not
  * just the one still being written. With it, finished blocks hold their props
  * and are skipped, and only the block currently streaming is re-highlighted.
+ * `fixPrompt` is a plain string, so it compares by value and does not defeat
+ * that.
  */
 export const CodeBlock = memo(function CodeBlock({
   code,
   language,
+  fixPrompt,
 }: {
   code: string;
   language?: string;
+  fixPrompt?: string;
 }) {
   const normalized = language ? normalizeLanguage(language) : "";
   const label = normalized ? (DISPLAY_NAMES[normalized] ?? normalized) : "code";
@@ -198,13 +210,12 @@ export const CodeBlock = memo(function CodeBlock({
           {label}
         </span>
         {/* Same reveal the message-level copy button uses: always there on
-            touch, where nothing can hover, and on hover/focus from `sm` up. */}
-        <CopyButton
-          text={code}
-          tone="code"
-          label={`Copy ${label} code`}
-          className="opacity-100 transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover/code:opacity-100 sm:group-focus-within/code:opacity-100"
-        />
+            touch, where nothing can hover, and on hover/focus from `sm` up.
+            Only the plain copy button lives here — the fix-prompt button is
+            below the code and never hidden. */}
+        <div className="flex min-w-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-0 sm:group-hover/code:opacity-100 sm:group-focus-within/code:opacity-100">
+          <CopyButton text={code} tone="code" label={`Copy ${label} code`} />
+        </div>
       </div>
 
       <SyntaxHighlighter
@@ -217,6 +228,20 @@ export const CodeBlock = memo(function CodeBlock({
       >
         {code}
       </SyntaxHighlighter>
+
+      {/* The fix-prompt action, under the code it belongs to and outside the
+          hover-revealed strip above, so it is visible at rest on every device.
+          The line of text beside it is what makes the button legible without a
+          tooltip: "copy" on a code block reads as "copy the code", and this
+          one copies something else entirely. */}
+      {fixPrompt && (
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-code-hover px-3 py-2">
+          <span className="min-w-0 text-[11px] leading-snug text-code-muted">
+            Hand this fix to your coding agent
+          </span>
+          <CopyFixPromptButton prompt={fixPrompt} />
+        </div>
+      )}
     </div>
   );
 });

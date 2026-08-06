@@ -1,4 +1,5 @@
 import type { GitHubRepoRef } from "@/lib/github-repo";
+import type { InstallationToken } from "@/lib/github/app";
 import type { Entitlement } from "@/lib/tier-features";
 import { CloneError, shallowClone } from "./clone";
 import { byRisk, collectFiles, type CollectedFile } from "./collect";
@@ -106,6 +107,11 @@ export async function* scanRepository(
   // rather than yielded as a progress event so per-request spend never
   // reaches the browser.
   budget: ScanBudget = newScanBudget(),
+  // Present only for a private repository, and only after
+  // authorizePrivateScan has granted it. Scoped to this one repository and
+  // revoked by the caller as soon as the scan drains; nothing here stores it,
+  // and it is used for exactly one thing — the clone.
+  auth?: InstallationToken,
 ): AsyncGenerator<ScanProgress> {
   const startedAt = Date.now();
 
@@ -123,7 +129,7 @@ export async function* scanRepository(
     yield { type: "status", message: `Cloning ${repo.slug}…` };
 
     try {
-      clone = await shallowClone(repo, signal);
+      clone = await shallowClone(repo, signal, auth);
     } catch (err) {
       if (err instanceof CloneError || err instanceof RepoHostError) {
         yield { type: "error", message: err.message };
@@ -699,15 +705,21 @@ function renderStructuredMarkdown(
   }
   lines.push("");
 
+  // Plain markdown, not a `<details>` disclosure. The report is rendered by
+  // components/message-content.tsx, and react-markdown does not pass raw HTML
+  // through — so the tags arrived in the chat as literal text reading
+  // "<details> <summary>Files flagged in triage</summary>". Rendering the
+  // HTML instead is the wrong way out of that: this document quotes paths and
+  // model output derived from an untrusted repository, and enabling raw HTML
+  // to get a collapsible section would hand that repository a way to inject
+  // markup. The list is short and reads fine open, which is how the plain
+  // renderer has always shown it.
   if (report.filesFlagged.length > 0) {
-    lines.push("<details>");
-    lines.push("<summary>Files flagged in triage</summary>");
+    lines.push("### Files flagged in triage");
     lines.push("");
     for (const file of report.filesFlagged) {
       lines.push(`- \`${file.relPath}\` — ${file.reason}${notReviewedSuffix(report, file)}`);
     }
-    lines.push("");
-    lines.push("</details>");
     lines.push("");
   }
 

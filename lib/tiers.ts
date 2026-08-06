@@ -90,6 +90,18 @@ export type TierLimits = {
 
   /** Scans jump the admission queue ahead of free and basic. */
   priority_queue: boolean;
+
+  /**
+   * Scanning private repositories through the GitHub App installation.
+   *
+   * Paid-only, and the gate is drawn at "pays us anything" rather than at a
+   * capability level: a private scan pulls somebody's unpublished source onto
+   * our disk and through two model vendors, so the account behind it should
+   * be one with a billing relationship and an identity attached. It is
+   * deliberately the only feature in this table whose reason is accountability
+   * rather than cost or capability.
+   */
+  private_repo_scanning: boolean;
 };
 
 export const TIER_LIMITS: Record<Tier, TierLimits> = {
@@ -102,6 +114,7 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
     vulnerability_report: false,
     deep_exploit_analysis: false,
     priority_queue: false,
+    private_repo_scanning: false,
   },
   basic: {
     messages_daily_cap: 100,
@@ -112,6 +125,7 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
     vulnerability_report: false,
     deep_exploit_analysis: false,
     priority_queue: false,
+    private_repo_scanning: true,
   },
   pro: {
     messages_daily_cap: 2_000,
@@ -122,6 +136,7 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
     vulnerability_report: true,
     deep_exploit_analysis: true,
     priority_queue: true,
+    private_repo_scanning: true,
   },
   max: {
     messages_daily_cap: 5_000,
@@ -132,6 +147,7 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
     vulnerability_report: true,
     deep_exploit_analysis: true,
     priority_queue: true,
+    private_repo_scanning: true,
   },
 };
 
@@ -147,6 +163,7 @@ export const TIER_FEATURES = [
   "vulnerability_report",
   "deep_exploit_analysis",
   "priority_queue",
+  "private_repo_scanning",
 ] as const;
 
 export type TierFeature = (typeof TIER_FEATURES)[number];
@@ -155,6 +172,7 @@ export const FEATURE_LABELS: Record<TierFeature, string> = {
   vulnerability_report: "Structured, exportable vulnerability reports",
   deep_exploit_analysis: "Realistic exploit-chain analysis",
   priority_queue: "Priority scan queue",
+  private_repo_scanning: "Private repository scanning",
 };
 
 /**
